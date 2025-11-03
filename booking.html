@@ -4,51 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Classroom Booking System</title>
-    <!-- 1. Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- 2. Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest/dist/lucide.js"></script>
 
-    <!-- 3. Firebase SDKs (MANDATORY) -->
     <script type="module">
-        // Import Firebase modules
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { 
-            getAuth, 
-            signInAnonymously, 
-            signInWithCustomToken, 
-            onAuthStateChanged 
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, 
-            collection, 
-            onSnapshot, 
-            addDoc, 
-            doc, 
-            updateDoc, 
-            deleteDoc, 
-            setLogLevel 
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- Firebase Config (MANDATORY) ---
-        // These variables are provided by the environment.
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : { 
-                apiKey: "demo-api-key", 
-                authDomain: "demo-project.firebaseapp.com", 
-                projectId: "demo-project-id" 
-            };
-
-        const appId = typeof __app_id !== 'undefined' 
-            ? __app_id 
-            : 'default-app-id';
-
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' 
-            ? __initial_auth_token 
-            : null;
-
+        // MODIFIED: Import Supabase client
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+        
+        // --- Supabase Config (MANDATORY) ---
+        const SUPABASE_URL = 'https://wlogiuepeppjahuwuwit.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb2dpdWVwZXBwamFodXd1d2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5ODI3MTQsImV4cCI6MjA3NzU1ODcxNH0.DSwQtBXjwWD5oqgzWwCoOt_nCzvnFylG4pK1ABG8crU';
+        
         // --- App Constants (from React) ---
         const TIME_SLOTS = [
           { start: '09:00', end: '10:00' }, { start: '10:00', end: '11:00' },
@@ -77,12 +43,11 @@
         ];
 
         // --- Global State ---
-        let db, auth;
-        let user = null;         // Demo user object { email, role }
-        let userRole = null;     // 'faculty', 'hod', 'admin'
-        let firebaseUserId = null; // Actual Firebase auth user ID
-        let bookings = [];       // Local cache of Firestore bookings
-        let unsubscribeBookings = null;
+        let supabase;
+        let user = null;
+        let userRole = null;
+        let userEmail = null;
+        let bookings = [];
         let loading = true;
 
         // --- Faculty View State ---
@@ -119,8 +84,8 @@
         };
         const isWeekend = (dateStr) => {
             const date = new Date(dateStr);
-            const day = date.getUTCDay(); // Use getUTCDay for consistency with ISO date
-            return day === 0 || day === 6;
+            const day = date.getUTCDay();
+            return day === 0; // Only Sunday
         };
         const getDayOfWeek = (dateStr) => {
             const date = new Date(dateStr);
@@ -128,6 +93,7 @@
         };
         const getSlotStatus = (room, slot) => {
             if (!facultyState.selectedDate) return { status: 'loading', label: 'Loading...' };
+            
             const dayOfWeek = getDayOfWeek(facultyState.selectedDate);
 
             const fixedClass = DEMO_FIXED_SCHEDULE.find(
@@ -175,7 +141,9 @@
                 renderMainContent();
             }
             // IMPORTANT: Refresh icons after any DOM change
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
         }
 
         /**
@@ -184,26 +152,26 @@
         function renderHeader() {
             appHeader.innerHTML = `
                 <div class="container mx-auto px-4 py-5">
-                  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                      <div class="bg-white bg-opacity-20 p-3 rounded-xl backdrop-blur-sm">
-                        <i data-lucide="building" class="text-white"></i>
-                      </div>
-                      <div>
-                        <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Classroom Booking</h1>
-                        <p class="text-blue-100 text-sm mt-0.5">${user.email}</p>
-                      </div>
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-white bg-opacity-20 p-3 rounded-xl backdrop-blur-sm">
+                                <i data-lucide="building" class="text-white"></i>
+                            </div>
+                            <div>
+                                <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Classroom Booking</h1>
+                                <p class="text-blue-100 text-sm mt-0.5">${user.email}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="bg-white bg-opacity-20 backdrop-blur-sm px-5 py-2.5 rounded-xl">
+                                <span class="font-bold capitalize text-sm tracking-wide">${userRole}</span>
+                            </div>
+                            <button id="logout-button" class="bg-red-500 hover:bg-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all duration-200 transform hover:scale-105 shadow-lg">
+                                <i data-lucide="log-out" size="18"></i>
+                                <span class="font-semibold">Logout</span>
+                            </button>
+                        </div>
                     </div>
-                    <div class="flex items-center gap-3">
-                      <div class="bg-white bg-opacity-20 backdrop-blur-sm px-5 py-2.5 rounded-xl">
-                        <span class="font-bold capitalize text-sm tracking-wide">${userRole}</span>
-                      </div>
-                      <button id="logout-button" class="bg-red-500 hover:bg-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all duration-200 transform hover:scale-105 shadow-lg">
-                        <i data-lucide="log-out" size="18"></i>
-                        <span class="font-semibold">Logout</span>
-                      </button>
-                    </div>
-                  </div>
                 </div>
             `;
             // Attach logout listener
@@ -270,7 +238,7 @@
         }
 
         function myBookingsButtonHTML() {
-            const myBookingsCount = bookings.filter(b => b.requestedBy === firebaseUserId).length;
+            const myBookingsCount = bookings.filter(b => b.requestedBy === userEmail).length;
             return `
                 <button id="my-bookings-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-lg flex items-center gap-2 transform hover:scale-105">
                     <i data-lucide="book-open" size="20"></i>
@@ -402,7 +370,7 @@
         }
         
         function renderMyBookingsView() {
-            const myBookings = bookings.filter(b => b.requestedBy === firebaseUserId);
+            const myBookings = bookings.filter(b => b.requestedBy === userEmail);
             facultyState.confirmCancel = null; // Reset confirm state on re-render
             
             mainContent.innerHTML = `
@@ -792,7 +760,10 @@
                 </div>
             `;
             modalContainer.classList.remove('hidden');
-            lucide.createIcons();
+            // MODIFIED: Reverted to standard lucide call with safety check
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
             
             // Attach modal listeners
             document.getElementById('modal-close-btn').addEventListener('click', closeModal);
@@ -812,42 +783,23 @@
         // --- Event Handlers & Logic ---
 
         /**
-         * Initializes Firebase and Auth.
+         * MODIFIED: Initializes Supabase.
          */
-        async function initializeFirebase() {
+        async function initializeAppServices() {
             try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                setLogLevel('Debug'); // Enable Firestore logging
+                // 1. Initialize Supabase
+                supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log("Supabase client initialized.");
 
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        console.log("User is signed in:", user.uid);
-                        firebaseUserId = user.uid;
-                    } else {
-                        console.log("No user signed in, signing in anonymously...");
-                        try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                            firebaseUserId = auth.currentUser.uid;
-                        } catch (error) {
-                            console.error("Error signing in:", error);
-                            loginError.textContent = "Error connecting to service. Please refresh.";
-                        }
-                    }
-                    
-                    // Once auth is ready (one way or another), hide loader
-                    setTimeout(() => {
-                        loading = false;
-                        updateUI();
-                    }, 500); // Give a small delay for loader aesthetics
-                });
+                // 2. Hide loader
+                // We will fetch data *after* login.
+                setTimeout(() => {
+                    loading = false;
+                    updateUI();
+                }, 500); 
+            
             } catch (error) {
-                console.error("Error initializing Firebase:", error);
+                console.error("Error initializing Supabase:", error);
                 loader.innerHTML = `<p class="text-red-300">Error initializing application. Please check console.</p>`;
             }
         }
@@ -925,14 +877,13 @@
                 
                 if (action === 'request-cancel') {
                     facultyState.confirmCancel = bookingId;
-                    renderMyBookingsView(); // Re-render to show confirm buttons
+                    renderMyBookingsView();
                 } else if (action === 'cancel-cancel') {
                     facultyState.confirmCancel = null;
-                    renderMyBookingsView(); // Re-render to hide confirm buttons
+                    renderMyBookingsView();
                 } else if (action === 'confirm-cancel') {
                     await handleCancelBooking(bookingId);
                     facultyState.confirmCancel = null;
-                    // updateUI() will be called by onSnapshot
                 }
             });
         }
@@ -957,11 +908,11 @@
                         break;
                     case 'request-deny':
                         hodState.confirmAction = bookingId;
-                        renderHODView(); // Re-render to show confirm
+                        renderHODView();
                         break;
                     case 'cancel-deny':
                         hodState.confirmAction = null;
-                        renderHODView(); // Re-render to hide confirm
+                        renderHODView();
                         break;
                     case 'confirm-deny':
                         await handleDeny(bookingId);
@@ -1002,7 +953,7 @@
                     adminState.confirmCancel = null;
                     renderAdminView();
                 } else if (action === 'confirm-delete') {
-                    await handleCancelBooking(bookingId); // Admin delete = cancel
+                    await handleCancelBooking(bookingId);
                     adminState.confirmCancel = null;
                 }
             });
@@ -1011,7 +962,7 @@
         /**
          * Handles the login form submission.
          */
-        function handleLogin(e) {
+        async function handleLogin(e) {
             e.preventDefault();
             const email = loginForm.email.value;
             const password = loginForm.password.value;
@@ -1021,13 +972,12 @@
             if (demoUser && demoUser.password === password) {
                 user = { email, role: demoUser.role };
                 userRole = demoUser.role;
+                userEmail = user.email;
                 loginError.classList.add('hidden');
                 loginForm.reset();
                 
-                // CRITICAL: Start listening to DB *after* login
-                initBookingListener();
+                await fetchAllBookings();
                 
-                updateUI();
             } else {
                 loginError.textContent = 'Invalid email or password. Try faculty@college.edu / faculty123';
                 loginError.classList.remove('hidden');
@@ -1040,15 +990,9 @@
         function handleLogout() {
             user = null;
             userRole = null;
+            userEmail = null;
             bookings = [];
             
-            // Stop listening to DB
-            if (unsubscribeBookings) {
-                unsubscribeBookings();
-                unsubscribeBookings = null;
-            }
-            
-            // Reset all view-specific states
             facultyState = {
                 selectedDate: new Date().toISOString().split('T')[0],
                 roomFilter: '', timeFilter: 'all', showMyBookings: false,
@@ -1061,35 +1005,34 @@
         }
         
         /**
-         * Sets up the real-time Firestore listener for bookings.
+         * MODIFIED: Fetches all bookings from Supabase.
          */
-        function initBookingListener() {
-            if (unsubscribeBookings) {
-                unsubscribeBookings(); // Unsubscribe from previous listener if any
-            }
-            
-            // Use a simplified path for demo purposes
-            const bookingsColPath = `bookings`;
-            const bookingsCol = collection(db, bookingsColPath);
-            
-            console.log(`Listening for bookings at: ${bookingsColPath}`);
+        async function fetchAllBookings() {
+            if (!supabase) return;
+            console.log("Fetching bookings from Supabase...");
+            try {
+                const { data, error } = await supabase
+                    .from('bookings')
+                    .select('*');
 
-            unsubscribeBookings = onSnapshot(bookingsCol, (snapshot) => {
-                bookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Firestore bookings updated:", bookings);
+                if (error) {
+                    throw error;
+                }
                 
-                // Re-render the current view with new data
+                bookings = data;
+                console.log("Supabase bookings fetched:", bookings);
+                
                 if (user) { 
                     updateUI();
                 }
-            }, (error) => {
-                console.error("Error listening to bookings:", error);
-                // You could show a global error message here
-            });
+            } catch (error) {
+                console.error("Error fetching bookings:", error);
+                alert("Error fetching bookings: " + error.message);
+            }
         }
         
         /**
-         * Handles the "Confirm Booking" button in the modal.
+         * MODIFIED: Handles the "Confirm Booking" button using Supabase.
          */
         async function handleBookingConfirm() {
             if (!facultyState.facultyName.trim()) {
@@ -1099,7 +1042,7 @@
             if (!facultyState.selectedSlot) return;
 
             facultyState.submitting = true;
-            renderModal(); // Re-render modal to show loading state
+            renderModal();
 
             const { room, slot } = facultyState.selectedSlot;
 
@@ -1110,15 +1053,19 @@
                 startTime: slot.start,
                 endTime: slot.end,
                 status: room.needsApproval ? 'pending' : 'confirmed',
-                requestedBy: firebaseUserId, // Link to Firebase auth user
-                createdAt: new Date().toISOString()
+                requestedBy: userEmail
+                // MODIFIED: Removed 'createdAt' line. The database will handle this automatically.
             };
 
             try {
-                const bookingsCol = collection(db, `bookings`);
-                await addDoc(bookingsCol, bookingData);
+                const { error } = await supabase
+                    .from('bookings')
+                    .insert(bookingData);
+
+                if (error) {
+                    throw error;
+                }
                 
-                // Show success message
                 if (room.needsApproval) {
                     alert(`✅ Booking request submitted successfully!\n\nYour request for ${room.name} on ${facultyState.selectedDate} has been sent for approval.\n\nYou can check the status in "My Bookings".`);
                 } else {
@@ -1126,55 +1073,76 @@
                 }
                 
                 closeModal();
-                // No need to call updateUI(), onSnapshot will do it.
+                await fetchAllBookings();
                 
             } catch (error) {
                 console.error("Error submitting booking:", error);
-                alert("Error submitting booking. Please try again.");
+                alert("Error submitting booking: " + error.message);
                 facultyState.submitting = false;
-                renderModal(); // Re-render modal to re-enable button
+                renderModal();
             }
         }
         
         /**
-         * (HOD) Approves a booking.
+         * MODIFIED: (HOD) Approves a booking using Supabase.
          */
         async function handleApprove(bookingId) {
             try {
-                const docRef = doc(db, `bookings`, bookingId);
-                await updateDoc(docRef, { status: 'confirmed' });
-                // onSnapshot will update the UI
+                const { error } = await supabase
+                    .from('bookings')
+                    .update({ status: 'confirmed' })
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                await fetchAllBookings();
             } catch (error) {
                 console.error("Error approving booking:", error);
-                alert("Error approving booking. Please try again.");
+                alert("Error approving booking: " + error.message);
             }
         }
 
         /**
-         * (HOD) Denies (deletes) a booking.
+         * MODIFIED: (HOD) Denies (deletes) a booking using Supabase.
          */
         async function handleDeny(bookingId) {
             try {
-                const docRef = doc(db, `bookings`, bookingId);
-                await deleteDoc(docRef);
-                // onSnapshot will update the UI
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                await fetchAllBookings();
             } catch (error) {
                 console.error("Error denying booking:", error);
-                alert("Error denying booking. Please try again.");
+                alert("Error denying booking: " + error.message);
             }
         }
 
         /**
-         * (Faculty/Admin) Cancels (deletes) a booking.
+         * MODIFIED: (Faculty/Admin) Cancels (deletes) a booking using Supabase.
          */
         async function handleCancelBooking(bookingId) {
             try {
-                const docRef = doc(db, `bookings`, bookingId);
-                await deleteDoc(docRef);
-                // onSnapshot will update the UI
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                await fetchAllBookings();
             } catch (error) {
                 console.error("Error canceling booking:", error);
-                alert("Error canceling booking. Please try again.");
+                alert("Error canceling booking: " + error.message);
             }
         }
 
@@ -1190,8 +1158,8 @@
             loginForm = document.getElementById('login-form');
             loginError = document.getElementById('login-error');
             
-            // Start Firebase and auth
-            initializeFirebase();
+            // Start Supabase client
+            initializeAppServices();
             
             // Attach listeners for static elements
             attachStaticListeners();
@@ -1202,7 +1170,6 @@
 
     </script>
 
-    <!-- Custom styles for scrollbar etc. (optional) -->
     <style>
         /* Simple scrollbar for modal */
         ::-webkit-scrollbar {
@@ -1230,7 +1197,6 @@
 </head>
 <body class="bg-gray-100">
 
-    <!-- 1. Full Screen Loader -->
     <div id="loader" class="fixed inset-0 bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 flex items-center justify-center z-50">
         <div class="text-center">
             <div class="relative">
@@ -1244,7 +1210,6 @@
         </div>
     </div>
 
-    <!-- 2. Login View -->
     <div id="login-view" class="hidden">
         <div class="min-h-screen bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-700 flex items-center justify-center p-4">
             <div class="absolute inset-0 overflow-hidden">
@@ -1271,7 +1236,7 @@
                     <span class="font-semibold">Faculty:</span> faculty@college.edu / faculty123
                     </div>
                     <div class="bg-white rounded-lg p-2">
-                    <span class="font-semibold">HOD:</span> hod@college.edu / hod123
+                    <span class_ ="font-semibold">HOD:</span> hod@college.edu / hod123
                     </div>
                     <div class="bg-white rounded-lg p-2">
                     <span class="font-semibold">Admin:</span> admin@college.edu / admin123
@@ -1331,22 +1296,16 @@
         </div>
     </div>
 
-    <!-- 3. Main App View (Header + Content) -->
     <div id="app-view" class="min-h-screen bg-gray-100 hidden">
-        <!-- Header renders here -->
-        <header id="app-header" class="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white shadow-2xl">
+        <header id="app-header" class="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-7F00 text-white shadow-2xl">
         </header>
         
-        <!-- Main content (Faculty, HOD, Admin) renders here -->
         <main id="main-content">
-            <!-- Content is dynamically inserted here -->
-        </main>
+            </main>
     </div>
 
-    <!-- 4. Modal Container -->
     <div id="modal-container" class="hidden">
-        <!-- Modal is dynamically inserted here -->
-    </div>
+        </div>
 
 </body>
 </html>
