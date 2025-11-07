@@ -1,0 +1,1569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Classroom Booking System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/lucide.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+
+    <script type="module">
+        // --- Supabase client (existing) ---
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+
+        // --- Supabase Config (MANDATORY) ---
+        // Using the public demo keys provided in the file
+        const SUPABASE_URL = 'https://wlogiuepeppjahuwuwit.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb2dpdWVwZXBwamFodXd1d2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5ODI3MTQsImV4cCI6MjA3NzU1ODcxNH0.DSwQtBXjwWD5oqgzWwCoOt_nCzvnFylG4pK1ABG8crU';
+        
+        // --- EmailJS config (PLACEHOLDERS) ---
+        // Using placeholder keys as EmailJS functionality is secondary to the preview
+        const EMAILJS_SERVICE_ID = 'YOUR_EMAILJS_SERVICE_ID';
+        const EMAILJS_TEMPLATE_ID = 'YOUR_EMAILJS_TEMPLATE_ID';
+        const EMAILJS_PUBLIC_KEY = 'YOUR_EMAILJS_PUBLIC_KEY';
+
+        // Initialize EmailJS (client-side)
+        if (typeof emailjs !== 'undefined' && emailjs.init) {
+            try {
+                emailjs.init(EMAILJS_PUBLIC_KEY);
+            } catch(e) {
+                console.warn("EmailJS init failed (using placeholder keys). Email features will not work.", e);
+            }
+        }
+
+        // --- App Constants (from your original file) ---
+        const TIME_SLOTS = [
+          { start: '09:00', end: '10:00' }, { start: '10:00', end: '11:00' },
+          { start: '11:00', end: '12:00' }, { start: '12:00', end: '13:00' },
+          { start: '13:00', end: '14:00' }, { start: '14:00', end: '15:00' },
+          { start: '15:00', end: '16:00' }, { start: '16:00', end: '17:00' }
+        ];
+        const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const DEMO_USERS = {
+          'faculty@college.edu': { password: 'faculty123', role: 'faculty' },
+          'hod@college.edu': { password: 'hod123', role: 'hod' },
+          'admin@college.edu': { password: 'admin123', role: 'admin' }
+        };
+        const DEMO_ROOMS = [
+          { id: '1', name: 'Room 401', type: 'classroom', needsApproval: false },
+          { id: '2', name: 'Room 402', type: 'classroom', needsApproval: false },
+          { id: '3', name: 'Room 403', type: 'classroom', needsApproval: false },
+          { id: '4', name: 'Auditorium A', type: 'auditorium', needsApproval: true },
+          { id: '5', name: 'Auditorium B', type: 'auditorium', needsApproval: true }
+        ];
+        const DEMO_FIXED_SCHEDULE = [
+          { id: '1', roomName: 'Room 401', dayOfWeek: 'Monday', startTime: '09:00', endTime: '10:00', subject: 'Mathematics' },
+          { id: '2', roomName: 'Room 401', dayOfWeek: 'Monday', startTime: '10:00', endTime: '11:00', subject: 'Physics' },
+          { id: '3', roomName: 'Room 402', dayOfWeek: 'Tuesday', startTime: '14:00', endTime: '15:00', subject: 'Chemistry' },
+          { id: '4', roomName: 'Room 403', dayOfWeek: 'Wednesday', startTime: '11:00', endTime: '12:00', subject: 'Biology' }
+        ];
+
+        // --- Global State ---
+        let supabase;
+        let user = null;
+        let userRole = null;
+        let userEmail = null;
+        let bookings = [];
+        let loading = true;
+
+        // --- Faculty View State ---
+        let facultyState = {
+            selectedDate: new Date().toISOString().split('T')[0],
+            roomFilter: '',
+            timeFilter: 'all',
+            showMyBookings: false,
+            facultyName: '',
+            selectedSlot: null,
+            confirmCancel: null,
+            submitting: false
+        };
+
+        // --- HOD View State ---
+        let hodState = {
+            confirmAction: null
+        };
+        
+        // --- Admin View State ---
+        let adminState = {
+            filterDate: '',
+            confirmCancel: null
+        };
+
+        // --- DOM Element References ---
+        let loader, loginView, appView, appHeader, mainContent, modalContainer, loginForm, loginError;
+
+        // --- Helper Functions (from React) ---
+        const getMaxDate = () => {
+            const maxDate = new Date();
+            maxDate.setDate(maxDate.getDate() + 7);
+            return maxDate.toISOString().split('T')[0];
+        };
+        const isWeekend = (dateStr) => {
+            const date = new Date(dateStr);
+            const day = date.getUTCDay();
+            return day === 0; // Only Sunday
+        };
+        const getDayOfWeek = (dateStr) => {
+            const date = new Date(dateStr);
+            return DAYS_OF_WEEK[date.getUTCDay()];
+        };
+        const getSlotStatus = (room, slot) => {
+            if (!facultyState.selectedDate) return { status: 'loading', label: 'Loading...' };
+            
+            const dayOfWeek = getDayOfWeek(facultyState.selectedDate);
+
+            const fixedClass = DEMO_FIXED_SCHEDULE.find(
+              fs => fs.roomName === room.name && fs.dayOfWeek === dayOfWeek &&
+                    fs.startTime === slot.start && fs.endTime === slot.end
+            );
+            if (fixedClass) {
+              return { status: 'fixed', label: `Fixed: ${fixedClass.subject}` };
+            }
+
+            const booking = bookings.find(
+              b => b.roomName === room.name && b.date === facultyState.selectedDate &&
+                   b.startTime === slot.start && b.endTime === slot.end
+            );
+            if (booking) {
+              if (booking.status === 'confirmed') {
+                return { status: 'booked', label: `Booked by ${booking.facultyName}` };
+              } else if (booking.status === 'pending') {
+                return { status: 'pending', label: 'Pending Approval' };
+              }
+            }
+            return { status: 'available', label: 'Available' };
+        };
+
+        // --- UI Rendering Functions ---
+
+        /**
+         * Main UI update function. Hides/shows views based on global state.
+         */
+        function updateUI() {
+            if (loading) {
+                loader.classList.remove('hidden');
+                loginView.classList.add('hidden');
+                appView.classList.add('hidden');
+            } else if (!user) {
+                loader.classList.add('hidden');
+                loginView.classList.remove('hidden');
+                appView.classList.add('hidden');
+            } else {
+                loader.classList.add('hidden');
+                loginView.classList.add('hidden');
+                appView.classList.remove('hidden');
+                
+                renderHeader();
+                renderMainContent();
+            }
+            // IMPORTANT: Refresh icons after any DOM change
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        }
+
+        /**
+         * Renders the header with user info.
+         * For HOD we add an "Approvals" button to access the HOD approval dashboard.
+         */
+        function renderHeader() {
+            appHeader.innerHTML = `
+                <div class="container mx-auto px-4 py-5">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-white bg-opacity-20 p-3 rounded-xl backdrop-blur-sm">
+                                <i data-lucide="building" class="text-white"></i>
+                            </div>
+                            <div>
+                                <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Classroom Booking</h1>
+                                <p class="text-blue-100 text-sm mt-0.5">${user.email}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="bg-white bg-opacity-20 backdrop-blur-sm px-5 py-2.5 rounded-xl">
+                                <span class="font-bold capitalize text-sm tracking-wide">${userRole}</span>
+                            </div>
+                            ${userRole === 'hod' ? `
+                              <button id="hod-approvals-btn" class="bg-yellow-500 hover:bg-yellow-600 px-4 py-2 rounded-xl text-sm font-semibold">Approvals</button>
+                            `: ''}
+                            <button id="logout-button" class="bg-red-500 hover:bg-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all duration-200 transform hover:scale-105 shadow-lg">
+                                <i data-lucide="log-out" size="18"></i>
+                                <span class="font-semibold">Logout</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // Attach logout listener
+            document.getElementById('logout-button').addEventListener('click', handleLogout);
+            if (userRole === 'hod') {
+                const btn = document.getElementById('hod-approvals-btn');
+                if (btn) btn.addEventListener('click', () => {
+                    // Show HOD approval dashboard
+                    renderHODView();
+                });
+            }
+        }
+
+        /**
+         * Renders the correct view (Faculty, HOD, Admin) into the main content area.
+         * HOD primarily sees the faculty booking UI (so HOD can book),
+         * but can open the HOD approval view via the header button.
+         */
+        function renderMainContent() {
+            switch (userRole) {
+                case 'faculty':
+                    renderFacultyView();
+                    break;
+                case 'hod':
+                    // Show faculty booking UI for HOD (so they can book), approvals accessible via header
+                    renderFacultyView();
+                    break;
+                case 'admin':
+                    renderAdminView();
+                    break;
+                default:
+                    mainContent.innerHTML = `<p class="p-8 text-red-500">Error: Unknown user role.</p>`;
+            }
+        }
+
+        /**
+         * Renders the Faculty dashboard or "My Bookings" page.
+         * HOD will use the same UI (so HOD can also book).
+         */
+        function renderFacultyView() {
+            if (facultyState.showMyBookings) {
+                renderMyBookingsView();
+                return;
+            }
+
+            if (isWeekend(facultyState.selectedDate)) {
+                mainContent.innerHTML = `
+                    <div class="container mx-auto px-4 py-8">
+                        <div class="flex justify-end mb-6">
+                            ${myBookingsButtonHTML()}
+                        </div>
+                        <div class="bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-2xl p-12 text-center shadow-xl">
+                            <div class="bg-yellow-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <i data-lucide="calendar" class="text-yellow-600" style="width: 48px; height: 48px;"></i>
+                            </div>
+                            <h2 class="text-3xl font-bold text-yellow-800 mb-3">College is Closed</h2>
+                            <p class="text-yellow-700 text-lg">Please select a weekday to view available rooms.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                mainContent.innerHTML = `
+                    <div class="container mx-auto px-4 py-8">
+                        <div class="flex justify-end mb-6">
+                            ${myBookingsButtonHTML()}
+                        </div>
+                        ${renderFacultyFilters()}
+                        <div id="room-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            ${renderRoomGrid()}
+                        </div>
+                    </div>
+                `;
+            }
+            attachFacultyListeners();
+        }
+
+        function myBookingsButtonHTML() {
+            const myBookingsCount = bookings.filter(b => b.requestedBy === userEmail).length;
+            return `
+                <button id="my-bookings-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-lg flex items-center gap-2 transform hover:scale-105">
+                    <i data-lucide="book-open" size="20"></i>
+                    My Bookings (${myBookingsCount})
+                </button>
+            `;
+        }
+
+        function renderFacultyFilters() {
+            return `
+                <div class="bg-white rounded-2xl shadow-xl p-6 mb-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm flex items-center gap-2">
+                        <i data-lucide="calendar" size="18" class="text-blue-600"></i>
+                        Select Date
+                        </label>
+                        <input
+                        type="date"
+                        id="filter-date"
+                        value="${facultyState.selectedDate}"
+                        min="${new Date().toISOString().split('T')[0]}"
+                        max="${getMaxDate()}"
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm flex items-center gap-2">
+                        <i data-lucide="filter" size="18" class="text-blue-600"></i>
+                        Filter by Room
+                        </label>
+                        <input
+                        type="text"
+                        id="filter-room"
+                        value="${facultyState.roomFilter}"
+                        placeholder="Search room name..."
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm flex items-center gap-2">
+                        <i data-lucide="clock" size="18" class="text-blue-600"></i>
+                        Filter by Time
+                        </label>
+                        <select
+                        id="filter-time"
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        >
+                        <option value="all" ${facultyState.timeFilter === 'all' ? 'selected' : ''}>All Times</option>
+                        ${TIME_SLOTS.map(slot => `
+                            <option value="${slot.start}" ${facultyState.timeFilter === slot.start ? 'selected' : ''}>${slot.start}</option>
+                        `).join('')}
+                        </select>
+                    </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRoomGrid() {
+            const filteredRooms = DEMO_ROOMS.filter(room => {
+                const matchesName = room.name.toLowerCase().includes(facultyState.roomFilter.toLowerCase());
+                if (!matchesName) return false;
+
+                if (facultyState.timeFilter === 'all') return true;
+
+                const slot = TIME_SLOTS.find(s => s.start === facultyState.timeFilter);
+                if (!slot) return true;
+
+                const status = getSlotStatus(room, slot);
+                return status.status === 'available';
+            });
+
+            if (filteredRooms.length === 0) {
+                return `
+                    <div class="lg:col-span-2 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-16 text-center shadow-xl">
+                        <i data-lucide="filter" class="mx-auto text-gray-300 mb-4" style="width: 64px; height: 64px;"></i>
+                        <p class="text-gray-600 text-xl font-semibold">No rooms match your filters</p>
+                        <p class="text-gray-500 mt-2">Try adjusting your search criteria</p>
+                    </div>
+                `;
+            }
+
+            return filteredRooms.map(room => `
+                <div class="bg-white rounded-2xl shadow-xl overflow-hidden transform transition-all hover:scale-105">
+                    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                        <h3 class="text-2xl font-bold">${room.name}</h3>
+                        <p class="text-blue-100 text-sm mt-1 capitalize font-semibold">${room.type}</p>
+                        </div>
+                        ${room.needsApproval ? `
+                        <span class="bg-yellow-400 text-yellow-900 text-xs px-3 py-1.5 rounded-full font-bold">
+                            Needs Approval
+                        </span>
+                        ` : ''}
+                    </div>
+                    </div>
+                    <div class="p-5">
+                    <div class="grid grid-cols-2 gap-3">
+                        ${TIME_SLOTS.map(slot => {
+                            const slotStatus = getSlotStatus(room, slot);
+                            const dataAttrs = `data-room-name="${room.name}" data-slot-start="${slot.start}" data-slot-end="${slot.end}"`;
+                            return `
+                                <button
+                                ${slotStatus.status === 'available' ? `data-action="book-slot" ${dataAttrs}` : ''}
+                                ${slotStatus.status !== 'available' ? 'disabled' : ''}
+                                class="slot-button p-4 rounded-xl text-sm font-bold transition-all ${
+                                    slotStatus.status === 'available'
+                                    ? 'bg-gradient-to-br from-green-100 to-green-200 text-green-800 hover:from-green-200 hover:to-green-300 cursor-pointer shadow-md hover:shadow-lg transform hover:scale-105'
+                                    : slotStatus.status === 'booked'
+                                    ? 'bg-gradient-to-br from-red-100 to-red-200 text-red-800 cursor-not-allowed'
+                                    : slotStatus.status === 'pending'
+                                    ? 'bg-gradient-to-br from-yellow-100 to-yellow-200 text-yellow-800 cursor-not-allowed'
+                                    : 'bg-gradient-to-br from-gray-100 to-gray-200 text-gray-600 cursor-not-allowed'
+                                }"
+                                >
+                                <div class="font-bold text-base">${slot.start} - ${slot.end}</div>
+                                <div class="text-xs mt-1.5 opacity-90">${slotStatus.label}</div>
+                                </button>
+                            `;
+                        }).join('')}
+                    </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function renderMyBookingsView() {
+            const myBookings = bookings.filter(b => b.requestedBy === userEmail);
+            facultyState.confirmCancel = null; // Reset confirm state on re-render
+            
+            mainContent.innerHTML = `
+                <div class="container mx-auto px-4 py-8">
+                    <div class="flex justify-between items-center mb-6">
+                        <button
+                            id="back-to-booking-btn"
+                            class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-lg"
+                        >
+                            ← Back to Booking
+                        </button>
+                    </div>
+
+                    <div class="bg-white rounded-2xl shadow-xl p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                        <i data-lucide="book-open" class="text-blue-600" size="28"></i>
+                        My Bookings
+                    </h2>
+
+                    ${myBookings.length === 0 ? `
+                        <div class="text-center py-16">
+                            <i data-lucide="calendar" class="mx-auto text-gray-300 mb-4" style="width: 64px; height: 64px;"></i>
+                            <p class="text-gray-600 text-lg">No bookings yet</p>
+                            <button
+                                id="back-to-booking-btn-2"
+                                class="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition"
+                            >
+                                Make a Booking
+                            </button>
+                        </div>
+                    ` : `
+                        <div class="space-y-4" id="my-bookings-list">
+                        ${myBookings.map(booking => `
+                            <div key="${booking.id}" class="border-2 border-gray-200 rounded-xl p-5 hover:shadow-lg transition-all bg-gradient-to-r from-white to-blue-50">
+                            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                                <div class="flex-1">
+                                <div class="flex items-center gap-3 mb-3">
+                                    <h3 class="font-bold text-xl text-gray-800">${booking.roomName}</h3>
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold ${
+                                    booking.status === 'confirmed'
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-yellow-100 text-yellow-700'
+                                    }">
+                                    ${booking.status.toUpperCase()}
+                                    </span>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                    <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="calendar" size="16" class="text-blue-600"></i>
+                                    <span class="font-semibold">${booking.date}</span>
+                                    </div>
+                                    <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="clock" size="16" class="text-blue-600"></i>
+                                    <span class="font-semibold">${booking.startTime} - ${booking.endTime}</span>
+                                    </div>
+                                    <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="users" size="16" class="text-blue-600"></i>
+                                    <span class="font-semibold">${booking.facultyName}</span>
+                                    </div>
+                                </div>
+                                </div>
+                                
+                                <div class="flex gap-2" data-booking-id="${booking.id}">
+                                    ${facultyState.confirmCancel === booking.id ? `
+                                        <button
+                                            data-action="confirm-cancel"
+                                            class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2"
+                                        >
+                                            <i data-lucide="check-circle" size="18"></i>
+                                            Confirm Cancel
+                                        </button>
+                                        <button
+                                            data-action="cancel-cancel"
+                                            class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-xl font-semibold transition-all"
+                                        >
+                                            Keep Booking
+                                        </button>
+                                    ` : `
+                                        <button
+                                            data-action="request-cancel"
+                                            class="bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg"
+                                        >
+                                            <i data-lucide="trash-2" size="18"></i>
+                                            Cancel Booking
+                                        </button>
+                                    `}
+                                </div>
+                            </div>
+                            </div>
+                        `).join('')}
+                        </div>
+                    `}
+                    </div>
+                </div>
+            `;
+            attachFacultyListeners(); // Re-attach listeners for this view
+        }
+
+        /**
+         * Renders the HOD approval dashboard.
+         */
+        function renderHODView() {
+            const pendingBookings = bookings.filter(b => b.status === 'pending');
+            hodState.confirmAction = null; // Reset confirm state
+            
+            mainContent.innerHTML = `
+                <div class="container mx-auto px-4 py-8">
+                <div class="bg-white rounded-2xl shadow-xl p-6">
+                    <h2 class="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                    <i data-lucide="clock" class="text-blue-600" size="32"></i>
+                    Pending Approvals
+                    </h2>
+
+                    ${pendingBookings.length === 0 ? `
+                    <div class="text-center py-20">
+                        <div class="bg-green-100 w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <i data-lucide="check-circle" class="text-green-600" style="width: 64px; height: 64px;"></i>
+                        </div>
+                        <p class="text-gray-600 text-xl font-semibold">All caught up!</p>
+                        <p class="text-gray-500 mt-2">No pending approvals at this time.</p>
+                    </div>
+                    ` : `
+                    <div class="space-y-4" id="hod-approval-list">
+                        ${pendingBookings.map(booking => `
+                        <div key="${booking.id}" class="border-2 border-gray-200 rounded-xl p-6 hover:shadow-xl transition-all bg-gradient-to-r from-white to-yellow-50">
+                            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-3 mb-3">
+                                <h3 class="font-bold text-2xl text-gray-800">${booking.roomName}</h3>
+                                <span class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs font-bold">
+                                    PENDING
+                                </span>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="users" size="18" class="text-blue-600"></i>
+                                    <div>
+                                    <span class="text-gray-500 text-xs">Faculty</span>
+                                    <p class="font-bold">${booking.facultyName}</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="calendar" size="18" class="text-blue-600"></i>
+                                    <div>
+                                    <span class="text-gray-500 text-xs">Date</span>
+                                    <p class="font-bold">${booking.date}</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 text-gray-700">
+                                    <i data-lucide="clock" size="18" class="text-blue-600"></i>
+                                    <div>
+                                    <span class="text-gray-500 text-xs">Time</span>
+                                    <p class="font-bold">${booking.startTime} - ${booking.endTime}</p>
+                                    </div>
+                                </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex gap-3" data-booking-id="${booking.id}">
+                                ${hodState.confirmAction === booking.id ? `
+                                    <button
+                                        data-action="confirm-deny"
+                                        class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg"
+                                    >
+                                        <i data-lucide="x-circle" size="20"></i>
+                                        Confirm Deny
+                                    </button>
+                                    <button
+                                        data-action="cancel-deny"
+                                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-3 rounded-xl font-bold transition-all"
+                                    >
+                                        Cancel
+                                    </button>
+                                ` : `
+                                    <button
+                                        data-action="approve"
+                                        class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg transform hover:scale-105"
+                                    >
+                                        <i data-lucide="check-circle" size="20"></i>
+                                        Approve
+                                    </button>
+                                    <button
+                                        data-action="request-deny"
+                                        class="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg transform hover:scale-105"
+                                    >
+                                        <i data-lucide="x-circle" size="20"></i>
+                                        Deny
+                                    </button>
+                                `}
+                            </div>
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                    `}
+                </div>
+                </div>
+            `;
+            attachHODListeners();
+        }
+
+        /**
+         * Renders the Admin dashboard with all bookings.
+         * I added an Admin-only Excel upload input and upload button here.
+         */
+        function renderAdminView() {
+            const filteredBookings = adminState.filterDate
+                ? bookings.filter(b => b.date === adminState.filterDate)
+                : bookings;
+
+            const sortedBookings = [...filteredBookings].sort((a, b) => {
+                if (a.date !== b.date) return a.date.localeCompare(b.date);
+                return a.startTime.localeCompare(b.startTime);
+            });
+
+            adminState.confirmCancel = null; // Reset confirm state
+
+            mainContent.innerHTML = `
+                <div class="container mx-auto px-4 py-8">
+                <div class="bg-white rounded-2xl shadow-xl p-6">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-4">
+                    <h2 class="text-3xl font-bold text-gray-800 flex items-center gap-3">
+                        <i data-lucide="calendar" class="text-blue-600" size="32"></i>
+                        All Bookings
+                    </h2>
+                    <div class="flex items-center gap-3">
+                        <input
+                        type="date"
+                        id="admin-filter-date"
+                        value="${adminState.filterDate}"
+                        class="px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        />
+                        ${adminState.filterDate ? `
+                        <button
+                            id="admin-clear-filter"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl font-semibold transition"
+                        >
+                            Clear Filter
+                        </button>
+                        ` : ''}
+                    </div>
+                    </div>
+
+                    <div class="mb-6 border-2 border-gray-100 p-4 rounded-xl">
+                        <h3 class="font-bold mb-2">Upload Classroom Timetable (Excel)</h3>
+                        <div class="flex gap-2">
+                            <input id="admin-excel-file" type="file" accept=".xlsx,.xls" class="p-2 rounded-xl border" />
+                            <button id="admin-upload-excel" class="bg-green-600 text-white px-4 py-2 rounded-xl">Upload & Sync</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Upload file format: columns for Room/Classroom, Day (e.g., Monday), StartTime (HH:MM), EndTime (HH:MM), Faculty (optional), Email (optional)</p>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                    <table class="w-full" id="admin-bookings-table">
+                        <thead>
+                        <tr class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b-2 border-blue-200">
+                            <th class="text-left p-4 font-bold text-gray-700">Faculty Name</th>
+                            <th class="text-left p-4 font-bold text-gray-700">Room</th>
+                            <th class="text-left p-4 font-bold text-gray-700">Date</th>
+                            <th class="text-left p-4 font-bold text-gray-700">Time</th>
+                            <th class="text-left p-4 font-bold text-gray-700">Status</th>
+                            <th class="text-left p-4 font-bold text-gray-700">Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        ${sortedBookings.map(booking => `
+                            <tr key="${booking.id}" class="border-b hover:bg-blue-50 transition-colors">
+                            <td class="p-4 font-semibold text-gray-800">${booking.facultyName}</td>
+                            <td class="p-4 font-semibold text-gray-800">${booking.roomName}</td>
+                            <td class="p-4 text-gray-700">${booking.date}</td>
+                            <td class="p-4 text-gray-700">${booking.startTime} - ${booking.endTime}</td>
+                            <td class="p-4">
+                                <span class="px-3 py-1.5 rounded-full text-xs font-bold ${
+                                booking.status === 'confirmed'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-yellow-100 text-yellow-700'
+                                }">
+                                ${booking.status.toUpperCase()}
+                                </span>
+                            </td>
+                            <td class="p-4" data-booking-id="${booking.id}">
+                                ${adminState.confirmCancel === booking.id ? `
+                                <div class="flex gap-2">
+                                    <button
+                                        data-action="confirm-delete"
+                                        class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1"
+                                    >
+                                        <i data-lucide="check-circle" size="14"></i>
+                                        Confirm
+                                    </button>
+                                    <button
+                                        data-action="cancel-delete"
+                                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                                ` : `
+                                <button
+                                    data-action="request-delete"
+                                    class="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1"
+                                >
+                                    <i data-lucide="trash-2" size="14"></i>
+                                    Delete
+                                </button>
+                                `} 
+                            </td>
+                            </tr>
+                        `).join('')}
+                        </tbody>
+                    </table>
+                    ${sortedBookings.length === 0 ? `
+                        <div class="text-center py-16 text-gray-600">
+                            <i data-lucide="calendar" class="mx-auto text-gray-300 mb-4" style="width: 64px; height: 64px;"></i>
+                            <p class="text-xl font-semibold">No bookings found</p>
+                            <p class="text-gray-500 mt-2">Try adjusting your filters</p>
+                        </div>
+                    ` : ''}
+                    </div>
+                </div>
+                </div>
+            `;
+            attachAdminListeners();
+            // Attach admin excel upload handler after rendering
+            const uploadBtn = document.getElementById('admin-upload-excel');
+            if (uploadBtn) uploadBtn.addEventListener('click', handleAdminExcelUpload);
+        }
+
+        /**
+         * Renders the modal for booking a room.
+         */
+        function renderModal() {
+            if (!facultyState.selectedSlot) {
+                modalContainer.innerHTML = '';
+                modalContainer.classList.add('hidden');
+                return;
+            }
+
+            const { room, slot } = facultyState.selectedSlot;
+            
+            modalContainer.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto transform transition-all">
+                    <div class="flex items-center justify-between p-6 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
+                    <h3 class="text-xl font-bold text-gray-800">Book Room</h3>
+                    <button
+                        id="modal-close-btn"
+                        class="text-gray-500 hover:text-gray-700 transition p-1 hover:bg-gray-200 rounded-lg"
+                    >
+                        <i data-lucide="x" size="24"></i>
+                    </button>
+                    </div>
+                    <div class="p-6">
+                        <div class="space-y-5">
+                            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-5 rounded-xl border-2 border-blue-200">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                <p class="text-sm text-gray-600 font-semibold mb-1">Room</p>
+                                <p class="font-bold text-lg text-gray-800">${room.name}</p>
+                                </div>
+                                <div>
+                                <p class="text-sm text-gray-600 font-semibold mb-1">Date</p>
+                                <p class="font-bold text-lg text-gray-800">${facultyState.selectedDate}</p>
+                                </div>
+                                <div class="col-span-2">
+                                <p class="text-sm text-gray-600 font-semibold mb-1">Time Slot</p>
+                                <p class="font-bold text-lg text-gray-800">${slot.start} - ${slot.end}</p>
+                                </div>
+                            </div>
+                            </div>
+
+                            <div>
+                            <label class="block text-gray-700 font-bold mb-2">Your Full Name</label>
+                            <input
+                                type="text"
+                                id="faculty-name-input"
+                                value="${facultyState.facultyName}"
+                                placeholder="e.g., Prof. John Smith"
+                                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                            />
+                            </div>
+
+                            ${room.needsApproval ? `
+                            <div class="bg-yellow-50 border-2 border-yellow-300 p-4 rounded-xl text-sm text-yellow-800">
+                                <p class="font-semibold mb-1">⚠️ Approval Required</p>
+                                <p>This booking requires Admin approval. You will be notified of the status.</p>
+                            </div>
+                            ` : ''}
+
+                            <button
+                                id="modal-confirm-btn"
+                                ${facultyState.submitting ? 'disabled' : ''}
+                                class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 shadow-lg transform hover:scale-105"
+                            >
+                                ${facultyState.submitting ? 'Submitting...' : 'Confirm Booking'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                </div>
+            `;
+            modalContainer.classList.remove('hidden');
+            // MODIFIED: Reverted to standard lucide call with safety check
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+            
+            // Attach modal listeners
+            document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+            document.getElementById('modal-confirm-btn').addEventListener('click', handleBookingConfirm);
+            document.getElementById('faculty-name-input').addEventListener('input', (e) => {
+                facultyState.facultyName = e.target.value;
+            });
+        }
+        
+        function closeModal() {
+            facultyState.selectedSlot = null;
+            // Do not clear faculty name, keep it for next booking
+            // facultyState.facultyName = '';
+            facultyState.submitting = false;
+            renderModal(); // This will hide it
+        }
+
+        // --- Event Handlers & Logic ---
+
+        /**
+         * Initializes Supabase.
+         */
+        async function initializeAppServices() {
+            try {
+                // 1. Initialize Supabase
+                supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log("Supabase client initialized.");
+
+                // 2. Hide loader
+                // We will fetch data *after* login.
+                setTimeout(() => {
+                    loading = false;
+                    updateUI();
+                }, 500); 
+            
+            } catch (error) {
+                console.error("Error initializing Supabase:", error);
+                loader.innerHTML = `<p class="text-red-300">Error initializing application. Please check console.</p>`;
+            }
+        }
+
+        /**
+         * Attaches listeners to static DOM elements (like the login form).
+         */
+        function attachStaticListeners() {
+            loginForm.addEventListener('submit', handleLogin);
+        }
+        
+        /**
+         * Attaches event listeners for the Faculty View (filters, buttons).
+         */
+        function attachFacultyListeners() {
+            const dateFilter = document.getElementById('filter-date');
+            if (dateFilter) dateFilter.addEventListener('change', (e) => {
+                facultyState.selectedDate = e.target.value;
+                updateUI();
+            });
+
+            const roomFilterInput = document.getElementById('filter-room');
+            if (roomFilterInput) roomFilterInput.addEventListener('input', (e) => {
+                facultyState.roomFilter = e.target.value;
+                // Optimization: Re-render only the grid, not the whole UI
+                const grid = document.getElementById('room-grid');
+                if (grid) {
+                    grid.innerHTML = renderRoomGrid();
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                }
+            });
+            
+            const timeFilterSelect = document.getElementById('filter-time');
+            if (timeFilterSelect) timeFilterSelect.addEventListener('change', (e) => {
+                facultyState.timeFilter = e.target.value;
+                // Optimization: Re-render only the grid, not the whole UI
+                const grid = document.getElementById('room-grid');
+                if (grid) {
+                    grid.innerHTML = renderRoomGrid();
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                }
+            });
+
+            const myBookingsBtn = document.getElementById('my-bookings-btn');
+            if (myBookingsBtn) myBookingsBtn.addEventListener('click', () => {
+                facultyState.showMyBookings = true;
+                updateUI();
+            });
+
+            const backToBookingBtn = document.getElementById('back-to-booking-btn');
+            if (backToBookingBtn) backToBookingBtn.addEventListener('click', () => {
+                facultyState.showMyBookings = false;
+                updateUI();
+            });
+            
+            const backToBookingBtn2 = document.getElementById('back-to-booking-btn-2');
+            if (backToBookingBtn2) backToBookingBtn2.addEventListener('click', () => {
+                facultyState.showMyBookings = false;
+                updateUI();
+            });
+
+            // Event delegation for dynamic buttons
+            const roomGrid = document.getElementById('room-grid');
+            if (roomGrid) roomGrid.addEventListener('click', (e) => {
+                const button = e.target.closest('button[data-action="book-slot"]');
+                if (!button) return;
+                
+                const { roomName, slotStart, slotEnd } = button.dataset;
+                const room = DEMO_ROOMS.find(r => r.name === roomName);
+                const slot = TIME_SLOTS.find(s => s.start === slotStart && s.end === slotEnd);
+                
+                if (room && slot) {
+                    facultyState.selectedSlot = { room, slot };
+                    renderModal();
+                }
+            });
+            
+            const myBookingsList = document.getElementById('my-bookings-list');
+            if (myBookingsList) myBookingsList.addEventListener('click', async (e) => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                
+                const bookingId = button.closest('[data-booking-id]').dataset.bookingId;
+                const action = button.dataset.action;
+                
+                if (action === 'request-cancel') {
+                    facultyState.confirmCancel = bookingId;
+                    renderMyBookingsView();
+                } else if (action === 'cancel-cancel') {
+                    facultyState.confirmCancel = null;
+                    renderMyBookingsView();
+                } else if (action === 'confirm-cancel') {
+                    await handleCancelBooking(bookingId);
+                    facultyState.confirmCancel = null;
+                }
+            });
+        }
+        
+        /**
+         * Attaches event listeners for the HOD View.
+         */
+        function attachHODListeners() {
+            const list = document.getElementById('hod-approval-list');
+            if (!list) return;
+            
+            list.addEventListener('click', async (e) => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                
+                const bookingId = button.closest('[data-booking-id]').dataset.bookingId;
+                const action = button.dataset.action;
+                
+                switch(action) {
+                    case 'approve':
+                        await handleApprove(bookingId);
+                        break;
+                    case 'request-deny':
+                        hodState.confirmAction = bookingId;
+                        renderHODView();
+                        break;
+                    case 'cancel-deny':
+                        hodState.confirmAction = null;
+                        renderHODView();
+                        break;
+                    case 'confirm-deny':
+                        await handleDeny(bookingId);
+                        hodState.confirmAction = null;
+                        break;
+                }
+            });
+        }
+        
+        /**
+         * Attaches event listeners for the Admin View.
+         */
+        function attachAdminListeners() {
+            const dateFilter = document.getElementById('admin-filter-date');
+            if (dateFilter) dateFilter.addEventListener('change', (e) => {
+                adminState.filterDate = e.target.value;
+                updateUI();
+            });
+            
+            const clearFilterBtn = document.getElementById('admin-clear-filter');
+            if (clearFilterBtn) clearFilterBtn.addEventListener('click', () => {
+                adminState.filterDate = '';
+                updateUI();
+            });
+            
+            const table = document.getElementById('admin-bookings-table');
+            if (table) table.addEventListener('click', async (e) => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                
+                const bookingId = button.closest('[data-booking-id]').dataset.bookingId;
+                const action = button.dataset.action;
+
+                if (action === 'request-delete') {
+                    adminState.confirmCancel = bookingId;
+                    renderAdminView();
+                } else if (action === 'cancel-delete') {
+                    adminState.confirmCancel = null;
+                    renderAdminView();
+                } else if (action === 'confirm-delete') {
+                    // Admin confirmed deletion -> delete and notify faculty who booked it
+                    await handleAdminDeleteBooking(bookingId);
+                    adminState.confirmCancel = null;
+                }
+            });
+        }
+
+        /**
+         * Handles the login form submission.
+         */
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = loginForm.email.value;
+            const password = loginForm.password.value;
+            
+            const demoUser = DEMO_USERS[email];
+            
+            if (demoUser && demoUser.password === password) {
+                user = { email, role: demoUser.role };
+                userRole = demoUser.role;
+                userEmail = user.email;
+                loginError.classList.add('hidden');
+                loginForm.reset();
+                
+                // Set faculty name if logging in as faculty/HOD
+                if(userRole === 'faculty') facultyState.facultyName = "Faculty User";
+                if(userRole === 'hod') facultyState.facultyName = "HOD User";
+
+                await fetchAllBookings();
+                
+            } else {
+                loginError.textContent = 'Invalid email or password. Try faculty@college.edu / faculty123';
+                loginError.classList.remove('hidden');
+            }
+        }
+
+        /**
+         * Handles user logout.
+         */
+        function handleLogout() {
+            user = null;
+            userRole = null;
+            userEmail = null;
+            bookings = [];
+            
+            facultyState = {
+                selectedDate: new Date().toISOString().split('T')[0],
+                roomFilter: '', timeFilter: 'all', showMyBookings: false,
+                facultyName: '', selectedSlot: null, confirmCancel: null, submitting: false
+            };
+            hodState = { confirmAction: null };
+            adminState = { filterDate: '', confirmCancel: null };
+
+            updateUI();
+        }
+        
+        /**
+         * Fetches all bookings from Supabase.
+         */
+        async function fetchAllBookings() {
+            if (!supabase) return;
+            console.log("Fetching bookings from Supabase...");
+            try {
+                const { data, error } = await supabase
+                    .from('bookings')
+                    .select('*');
+
+                if (error) {
+                    throw error;
+                }
+                
+                bookings = data;
+                console.log("Supabase bookings fetched:", bookings);
+                
+                if (user) { 
+                    updateUI();
+                }
+            } catch (error) {
+                console.error("Error fetching bookings:", error);
+                alert("Error fetching bookings: " + error.message);
+            }
+        }
+        
+        /**
+         * Handles the "Confirm Booking" button using Supabase.
+         * HOD bookings: same as faculty bookings.
+         * Auditorium bookings -> status = 'pending' (Admin approves).
+         */
+        async function handleBookingConfirm() {
+            if (!facultyState.facultyName.trim()) {
+                alert("Please enter your full name.");
+                return;
+            }
+            if (!facultyState.selectedSlot) return;
+
+            facultyState.submitting = true;
+            renderModal();
+
+            const { room, slot } = facultyState.selectedSlot;
+
+            const bookingData = {
+                roomName: room.name,
+                facultyName: facultyState.facultyName.trim(),
+                date: facultyState.selectedDate,
+                startTime: slot.start,
+                endTime: slot.end,
+                status: room.needsApproval ? 'pending' : 'confirmed',
+                requestedBy: userEmail
+            };
+
+            try {
+                const { error } = await supabase
+                    .from('bookings')
+                    .insert(bookingData);
+
+                if (error) {
+                    throw error;
+                }
+                
+                if (room.needsApproval) {
+                    alert(`✅ Booking request submitted successfully!\n\nYour request for ${room.name} on ${facultyState.selectedDate} has been sent for approval.\n\nYou can check the status in "My Bookings".`);
+                } else {
+                    alert(`✅ Room booked successfully!\n\n${room.name} is confirmed for ${facultyState.selectedDate} at ${slot.start}-${slot.end}.`);
+                }
+                
+                closeModal();
+                await fetchAllBookings();
+                
+            } catch (error) {
+                console.error("Error submitting booking:", error);
+                alert("Error submitting booking: " + error.message);
+                facultyState.submitting = false;
+                renderModal();
+            }
+        }
+        
+        /**
+         * (HOD) Approves a booking using Supabase. (HOD can approve non-auditorium room requests if needed)
+         */
+        async function handleApprove(bookingId) {
+            try {
+                const { error } = await supabase
+                    .from('bookings')
+                    .update({ status: 'confirmed' })
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                await fetchAllBookings();
+            } catch (error) {
+                console.error("Error approving booking:", error);
+                alert("Error approving booking: " + error.message);
+            }
+        }
+
+        /**
+         * (HOD) Denies (deletes) a booking using Supabase.
+         */
+        async function handleDeny(bookingId) {
+            try {
+                // Optionally fetch booking to get requester to notify (not implemented for HOD deny)
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                await fetchAllBookings();
+            } catch (error) {
+                console.error("Error denying booking:", error);
+                alert("Error denying booking: " + error.message);
+            }
+        }
+
+        /**
+         * (Faculty) Cancels (deletes) a booking using Supabase.
+         * Also sends email to Admin notifying about the cancellation.
+         */
+        async function handleCancelBooking(bookingId) {
+            try {
+                // fetch the booking to get details for email
+                const { data: bookRows, error: fetchErr } = await supabase.from('bookings').select('*').eq('id', bookingId).limit(1);
+                if (fetchErr) throw fetchErr;
+                const booking = bookRows && bookRows[0];
+
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                // Notify admin by email if cancelled by faculty
+                sendEmailToAdminOnCancel(booking);
+                await fetchAllBookings();
+            } catch (error) {
+                console.error("Error canceling booking:", error);
+                alert("Error canceling booking: " + error.message);
+            }
+        }
+
+        /**
+         * Admin deletes a booking — after admin deletes, notify the faculty who requested it.
+         */
+        async function handleAdminDeleteBooking(bookingId) {
+            try {
+                // fetch booking details first (to notify faculty email)
+                const { data: bookRows, error: fetchErr } = await supabase.from('bookings').select('*').eq('id', bookingId).limit(1);
+                if (fetchErr) throw fetchErr;
+                const booking = bookRows && bookRows[0];
+
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                // Notify faculty who booked it
+                sendEmailToFacultyOnAdminCancel(booking);
+                await fetchAllBookings();
+            } catch (error) {
+                console.error("Error deleting booking:", error);
+                alert("Error deleting booking: " + error.message);
+            }
+        }
+
+        // -----------------------------
+        // Excel upload (Admin-only)
+        // -----------------------------
+        /**
+         * Reads the uploaded Excel file (first sheet), expects columns:
+         * Room / Classroom, Day (Monday...), StartTime (HH:MM), EndTime (HH:MM), Faculty (optional), Email (optional)
+         * and inserts bookings into the Supabase bookings table (status = confirmed).
+         */
+        async function handleAdminExcelUpload() {
+            const fileInput = document.getElementById('admin-excel-file');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                alert('Please select an Excel file first.');
+                return;
+            }
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+                    let inserted = 0;
+                    let newBookings = [];
+                    for (const row of rows) {
+                        // Normalize column names (be flexible)
+                        const roomName = String(row.Room || row.Classroom || row.RoomName || row['Room Name'] || 'Unknown Room').trim();
+                        const dayName = String(row.Day || row.DayOfWeek || row['Day'] || 'Monday').trim();
+                        const startTime = String(row.StartTime || row.Start || row['Start Time'] || '09:00').trim();
+                        const endTime = String(row.EndTime || row.End || row['End Time'] || '10:00').trim();
+                        const facultyName = String(row.Faculty || row.Instructor || row['Faculty Name'] || 'Timetable').trim();
+                        const facultyEmail = String(row.Email || row['Faculty Email'] || row.EmailAddress || 'unknown@college.edu').trim();
+
+                        const date = getDateForDayName(dayName);
+                        // Build booking entry
+                        const entry = {
+                            roomName,
+                            facultyName,
+                            date,
+                            startTime,
+                            endTime,
+                            status: 'confirmed',
+                            requestedBy: facultyEmail
+                        };
+                        newBookings.push(entry);
+                    }
+                    
+                    if (newBookings.length > 0) {
+                         const { data, error } = await supabase.from('bookings').insert(newBookings);
+                         if (error) throw error;
+                         inserted = data ? data.length : newBookings.length; // Fallback count
+                    }
+                    
+                    await fetchAllBookings();
+                    alert(`Imported ${inserted} rows from Excel and booked those slots.`);
+                } catch (err) {
+                    console.error('Excel import error', err);
+                    alert('Error reading Excel file. Check file format. See console for details.');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        /**
+         * Helper: Convert day name (Monday/Tuesday...) into the closest date in the current week.
+         */
+        function getDateForDayName(dayName) {
+            // Accept variations like 'Mon', 'monday', etc.
+            const normalized = String(dayName).trim();
+            const idx = DAYS_OF_WEEK.findIndex(d => d.toLowerCase().startsWith(normalized.toLowerCase().slice(0,3)));
+            const target = idx >= 0 ? idx : 1; // default Monday
+            
+            // If target is Sunday (0), treat it as 7 for calculation purposes
+            const targetDay = target === 0 ? 7 : target;
+
+            const today = new Date();
+            const todayDay = today.getDay() === 0 ? 7 : today.getDay(); // Sunday is 7
+
+            let diff = targetDay - todayDay;
+            // If the day has already passed this week, move to next week's day
+            if (diff < 0) {
+                diff += 7;
+            }
+
+            const date = new Date(today);
+            date.setDate(today.getDate() + diff);
+            return date.toISOString().split('T')[0];
+        }
+
+        // -----------------------------
+        // Email sending helpers (EmailJS)
+        // -----------------------------
+        function sendEmailToAdminOnCancel(booking) {
+            if (!booking) return;
+            // Template parameters: change keys to match your EmailJS template
+            const params = {
+                faculty_name: booking.facultyName || 'Unknown',
+                room_name: booking.roomName || '',
+                booking_date: booking.date || '',
+                booking_time: `${booking.startTime || ''} - ${booking.endTime || ''}`,
+                to_email: 'admin@college.edu' // or use a real admin email variable
+            };
+            if (typeof emailjs !== 'undefined' && emailjs.send && EMAILJS_SERVICE_ID !== 'YOUR_EMAILJS_SERVICE_ID') {
+                emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
+                    .then(() => console.log('EmailJS: cancellation notification sent to admin'))
+                    .catch(err => console.warn('EmailJS error sending admin cancel notification', err));
+            } else {
+                console.log("EmailJS not configured or init failed. Skipped sending admin cancel notification.");
+            }
+        }
+
+        function sendEmailToFacultyOnAdminCancel(booking) {
+            if (!booking) return;
+            // booking.requestedBy is expected to hold the faculty email
+            const facultyEmail = booking.requestedBy || booking.facultyEmail || 'unknown@college.edu';
+            const params = {
+                faculty_name: booking.facultyName || 'Faculty',
+                room_name: booking.roomName || '',
+                booking_date: booking.date || '',
+                booking_time: `${booking.startTime || ''} - ${booking.endTime || ''}`,
+                to_email: facultyEmail
+            };
+            if (typeof emailjs !== 'undefined' && emailjs.send && EMAILJS_SERVICE_ID !== 'YOUR_EMAILJS_SERVICE_ID') {
+                emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
+                    .then(() => console.log('EmailJS: admin delete notification sent to faculty'))
+                    .catch(err => console.warn('EmailJS error sending faculty notification', err));
+            } else {
+                console.log("EmailJS not configured or init failed. Skipped sending faculty notification.");
+            }
+        }
+
+        // -----------------------------
+        // Admin: Delete booking (without prompt)
+        // -----------------------------
+        async function deleteBookingDirect(bookingId) {
+            try {
+                const { error } = await supabase.from('bookings').delete().eq('id', bookingId);
+                if (error) throw error;
+                await fetchAllBookings();
+            } catch (err) {
+                console.error('deleteBookingDirect error', err);
+                alert('Delete failed: ' + err.message);
+            }
+        }
+
+        // --- App Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Get references to main containers
+            loader = document.getElementById('loader');
+            loginView = document.getElementById('login-view');
+            appView = document.getElementById('app-view');
+            appHeader = document.getElementById('app-header');
+            mainContent = document.getElementById('main-content');
+            modalContainer = document.getElementById('modal-container');
+            loginForm = document.getElementById('login-form');
+            loginError = document.getElementById('login-error');
+            
+            // Start Supabase client
+            initializeAppServices();
+            
+            // Attach listeners for static elements
+            attachStaticListeners();
+            
+            // Initial render
+            updateUI();
+        });
+
+        // -----------------------------
+        // Admin Excel upload binding (global function used inside render)
+        // -----------------------------
+        // Make it globally accessible for the inline event listener
+        window.handleAdminExcelUpload = handleAdminExcelUpload;
+
+    </script>
+
+    <style>
+        /* Simple scrollbar for modal */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #a8a8a8;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #888;
+        }
+        /* Fix for lucide icons */
+        i[data-lucide] {
+            width: 1em;
+            height: 1em;
+            vertical-align: middle;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="loader" class="fixed inset-0 bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="relative">
+            <div class="animate-spin rounded-full h-20 w-20 border-t-4 border-b-4 border-white mx-auto mb-6"></div>
+            <div class="absolute inset-0 flex items-center justify-center">
+                <i data-lucide="calendar" class="text-white" style="width: 32px; height: 32px;"></i>
+            </div>
+            </div>
+            <p class="text-white text-2xl font-bold">Loading...</p>
+            <p class="text-blue-200 text-sm mt-2">Connecting to Booking Service</p>
+        </div>
+    </div>
+
+    <div id="login-view" class="hidden">
+        <div class="min-h-screen bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-700 flex items-center justify-center p-4">
+            <div class="absolute inset-0 overflow-hidden">
+                <div class="absolute -top-40 -right-40 w-80 h-80 bg-white opacity-5 rounded-full blur-3xl"></div>
+                <div class="absolute -bottom-40 -left-40 w-80 h-80 bg-white opacity-5 rounded-full blur-3xl"></div>
+            </div>
+            
+            <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 relative z-10 backdrop-blur-sm">
+                <div class="text-center mb-8">
+                <div class="bg-gradient-to-br from-blue-600 to-indigo-600 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-xl transform hover:scale-110 transition-transform">
+                    <i data-lucide="calendar" class="text-white" style="width: 40px; height: 40px;"></i>
+                </div>
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h2>
+                <p class="text-gray-600">College Classroom Booking System</p>
+                </div>
+
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-4 mb-6">
+                <p class="text-sm font-bold text-blue-900 mb-3 flex items-center gap-2">
+                    <i data-lucide="users" size="16"></i>
+                    Demo Accounts
+                </p>
+                <div class="text-xs text-blue-800 space-y-2">
+                    <div class="bg-white rounded-lg p-2">
+                    <span class="font-semibold">Faculty:</span> faculty@college.edu / faculty123
+                    </div>
+                    <div class="bg-white rounded-lg p-2">
+                    <span class="font-semibold">HOD:</span> hod@college.edu / hod123
+                    </div>
+                    <div class="bg-white rounded-lg p-2">
+                    <span class="font-semibold">Admin:</span> admin@college.edu / admin123
+                    </div>
+                </div>
+                </div>
+
+                <form id="login-form" class="space-y-5">
+                    <div id="login-error" class="hidden bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+                        <i data-lucide="x-circle" size="18"></i>
+                        Invalid email or password.
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm">Email Address</label>
+                        <input
+                        type="email"
+                        name="email"
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        placeholder="your.email@college.edu"
+                        required
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm">Password</label>
+                        <input
+                        type="password"
+                        name="password"
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        placeholder="Enter your password"
+                        required
+                        />
+                    </div>
+
+                    <div class="flex items-center">
+                        <input
+                        type="checkbox"
+                        id="rememberMe"
+                        name="rememberMe"
+                        checked
+                        class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <label for="rememberMe" class="ml-3 text-gray-700 font-medium">
+                        Remember me
+                        </label>
+                    </div>
+
+                    <button
+                        type="submit"
+                        class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-4 rounded-xl transition-all duration-200 disabled:opacity-50 shadow-lg transform hover:scale-105"
+                    >
+                        Login to Dashboard
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="app-view" class="min-h-screen bg-gray-100 hidden">
+        <header id="app-header" class="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-800 text-white shadow-2xl">
+            </header>
+        
+        <main id="main-content">
+            </main>
+    </div>
+
+    <div id="modal-container" class="hidden">
+        </div>
+
+</body>
+</html>
