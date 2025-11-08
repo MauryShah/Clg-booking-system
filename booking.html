@@ -103,6 +103,12 @@
         let userEmail = null;
         let bookings = [];
         let loading = true;
+        // NEW: State for the cancellation modal
+        let cancelModalState = {
+            show: false,
+            bookingId: null,
+            isSubmitting: false
+        };
 
         // --- Faculty View State ---
         let facultyState = {
@@ -113,7 +119,7 @@
             showMyBookings: false,
             facultyName: '',
             selectedSlot: null,
-            confirmCancel: null,
+            // confirmCancel: null, // REMOVED: Replaced by modal
             submitting: false,
             itServices: false, // Added for IT Services checkbox
             foodServices: false // Added for Food Services checkbox
@@ -461,7 +467,7 @@
         
         function renderMyBookingsView() {
             const myBookings = bookings.filter(b => b.requestedBy === userEmail);
-            facultyState.confirmCancel = null; // Reset confirm state on re-render
+            // facultyState.confirmCancel = null; // REMOVED: No longer needed
             
             mainContent.innerHTML = `
                 <div class="container mx-auto px-4 py-8">
@@ -523,31 +529,17 @@
                                 </div>
                                 </div>
                                 
+                                <!-- MODIFIED: Simplified button -->
                                 <div class="flex gap-2" data-booking-id="${booking.id}">
-                                    ${facultyState.confirmCancel === booking.id ? `
-                                        <button
-                                            data-action="confirm-cancel"
-                                            class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2"
-                                        >
-                                            <i data-lucide="check-circle" size="18"></i>
-                                            Confirm Cancel
-                                        </button>
-                                        <button
-                                            data-action="cancel-cancel"
-                                            class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-xl font-semibold transition-all"
-                                        >
-                                            Keep Booking
-                                        </button>
-                                    ` : `
-                                        <button
-                                            data-action="request-cancel"
-                                            class="bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg"
-                                        >
-                                            <i data-lucide="trash-2" size="18"></i>
-                                            Cancel Booking
-                                        </button>
-                                    `}
+                                    <button
+                                        data-action="request-cancel"
+                                        class="bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg"
+                                    >
+                                        <i data-lucide="trash-2" size="18"></i>
+                                        Cancel Booking
+                                    </button>
                                 </div>
+                                <!-- END MODIFICATION -->
                             </div>
                             </div>
                         `).join('')}
@@ -912,6 +904,95 @@
             });
         }
         
+        /**
+         * NEW: Renders the confirmation modal for cancelling a booking.
+         */
+        function renderCancelModal() {
+            if (!cancelModalState.show) {
+                modalContainer.innerHTML = '';
+                modalContainer.classList.add('hidden');
+                return;
+            }
+
+            modalContainer.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full transform transition-all">
+                    <div class="flex items-center justify-between p-6 border-b">
+                        <h3 class="text-xl font-bold text-gray-800">Confirm Cancellation</h3>
+                        <button
+                            id="cancel-modal-close-btn"
+                            class="text-gray-500 hover:text-gray-700 transition p-1 hover:bg-gray-200 rounded-lg"
+                        >
+                            <i data-lucide="x" size="24"></i>
+                        </button>
+                    </div>
+                    <div class="p-6">
+                        <p class="text-gray-700 text-lg mb-6">Are you sure you want to cancel this lecture booking?</p>
+                        <div class="flex justify-end gap-4">
+                            <button
+                                id="cancel-modal-no-btn"
+                                class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 px-6 rounded-xl transition-all"
+                            >
+                                No
+                            </button>
+                            <button
+                                id="cancel-modal-yes-btn"
+                                ${cancelModalState.isSubmitting ? 'disabled' : ''}
+                                class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl transition-all disabled:opacity-50"
+                            >
+                                ${cancelModalState.isSubmitting ? 'Cancelling...' : 'Yes, Cancel'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                </div>
+            `;
+            modalContainer.classList.remove('hidden');
+            
+            // Re-run lucide icons
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+
+            // Attach listeners for this modal
+            document.getElementById('cancel-modal-close-btn').addEventListener('click', closeCancelModal);
+            document.getElementById('cancel-modal-no-btn').addEventListener('click', closeCancelModal);
+            document.getElementById('cancel-modal-yes-btn').addEventListener('click', handleConfirmCancel);
+        }
+
+        /**
+         * NEW: Helper function to close the cancel modal
+         */
+        function closeCancelModal() {
+            cancelModalState.show = false;
+            cancelModalState.bookingId = null;
+            cancelModalState.isSubmitting = false;
+            renderCancelModal(); // This will hide it
+        }
+
+        /**
+         * NEW: Helper function to handle the 'Yes' click on cancel modal
+         */
+        async function handleConfirmCancel() {
+            if (cancelModalState.isSubmitting) return;
+
+            cancelModalState.isSubmitting = true;
+            renderCancelModal(); // Re-render to show 'Cancelling...'
+
+            try {
+                // This function already deletes from Supabase and fetches all bookings
+                await handleCancelBooking(cancelModalState.bookingId);
+                // Success
+                closeCancelModal();
+            } catch (error) {
+                // Error already alerted in handleCancelBooking
+                console.error("Failed to confirm cancel", error);
+                // Re-enable button on failure
+                cancelModalState.isSubmitting = false;
+                renderCancelModal(); 
+            }
+        }
+        
         function closeModal() {
             facultyState.selectedSlot = null;
             // Do not clear faculty name, keep it for next booking
@@ -1034,6 +1115,7 @@
                 }
             });
             
+            // MODIFIED: Updated listener for new modal flow
             const myBookingsList = document.getElementById('my-bookings-list');
             if (myBookingsList) myBookingsList.addEventListener('click', async (e) => {
                 const button = e.target.closest('button');
@@ -1043,15 +1125,12 @@
                 const action = button.dataset.action;
                 
                 if (action === 'request-cancel') {
-                    facultyState.confirmCancel = bookingId;
-                    renderMyBookingsView();
-                } else if (action === 'cancel-cancel') {
-                    facultyState.confirmCancel = null;
-                    renderMyBookingsView();
-                } else if (action === 'confirm-cancel') {
-                    await handleCancelBooking(bookingId);
-                    facultyState.confirmCancel = null;
+                    // Show the new confirmation modal
+                    cancelModalState.show = true;
+                    cancelModalState.bookingId = bookingId;
+                    renderCancelModal();
                 }
+                // No more 'confirm-cancel' or 'cancel-cancel' actions here
             });
         }
         
@@ -1165,14 +1244,17 @@
             userEmail = null;
             bookings = [];
             
+            // MODIFIED: Reset state
             facultyState = {
                 selectedDate: new Date().toISOString().split('T')[0],
                 roomFilter: '', timeFilter: 'all', roomTypeFilter: 'all', showMyBookings: false,
-                facultyName: '', selectedSlot: null, confirmCancel: null, submitting: false,
+                facultyName: '', selectedSlot: null, submitting: false,
                 itServices: false, foodServices: false
             };
             hodState = { confirmAction: null };
             adminState = { filterDate: '', confirmCancel: null };
+            // NEW: Reset cancel modal state
+            cancelModalState = { show: false, bookingId: null, isSubmitting: false };
 
             updateUI();
         }
@@ -1328,6 +1410,8 @@
             } catch (error) {
                 console.error("Error canceling booking:", error);
                 alert("Error canceling booking: " + error.message);
+                // IMPORTANT: Throw error so the modal knows it failed
+                throw error;
             }
         }
 
