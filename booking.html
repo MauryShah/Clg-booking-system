@@ -1,21 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Classroom Booking System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest/dist/lucide.js"></script>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+
     <script type="module">
-        // MODIFIED: Import Supabase client
+        // --- Supabase client (existing) ---
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
-        
+
         // --- Supabase Config (MANDATORY) ---
+        // Using the public demo keys provided in the file
         const SUPABASE_URL = 'https://wlogiuepeppjahuwuwit.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb2dpdWVwZXBwamFodXd1d2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE5ODI3MTQsImV4cCI6MjA3NzU1ODcxNH0.DSwQtBXjwWD5oqgzWwCoOt_nCzvnFylG4pK1ABG8crU';
         
-        // --- App Constants (from React) ---
+        // --- EmailJS config (PLACEHOLDERS) ---
+        // Using placeholder keys as EmailJS functionality is secondary to the preview
+        const EMAILJS_SERVICE_ID = 'YOUR_EMAILJS_SERVICE_ID';
+        const EMAILJS_TEMPLATE_ID = 'YOUR_EMAILJS_TEMPLATE_ID';
+        const EMAILJS_PUBLIC_KEY = 'YOUR_EMAILJS_PUBLIC_KEY';
+
+        // Initialize EmailJS (client-side)
+        if (typeof emailjs !== 'undefined' && emailjs.init) {
+            try {
+                emailjs.init(EMAILJS_PUBLIC_KEY);
+            } catch(e) {
+                console.warn("EmailJS init failed (using placeholder keys). Email features will not work.", e);
+            }
+        }
+
+        // --- App Constants (from your original file) ---
         const TIME_SLOTS = [
           { start: '09:00', end: '10:00' }, { start: '10:00', end: '11:00' },
           { start: '11:00', end: '12:00' }, { start: '12:00', end: '13:00' },
@@ -28,12 +47,47 @@
           'hod@college.edu': { password: 'hod123', role: 'hod' },
           'admin@college.edu': { password: 'admin123', role: 'admin' }
         };
+        // Updated DEMO_ROOMS with all requested classrooms and labs
         const DEMO_ROOMS = [
-          { id: '1', name: 'Room 401', type: 'classroom', needsApproval: false },
-          { id: '2', name: 'Room 402', type: 'classroom', needsApproval: false },
-          { id: '3', name: 'Room 403', type: 'classroom', needsApproval: false },
-          { id: '4', name: 'Auditorium A', type: 'auditorium', needsApproval: true },
-          { id: '5', name: 'Auditorium B', type: 'auditorium', needsApproval: true }
+          // Classrooms
+          { id: '1', name: 'CR4', type: 'classroom', needsApproval: false },
+          { id: '2', name: '201', type: 'classroom', needsApproval: false },
+          { id: '3', name: '202', type: 'classroom', needsApproval: false },
+          { id: '4', name: '203', type: 'classroom', needsApproval: false },
+          { id: '5', name: '301', type: 'classroom', needsApproval: false },
+          { id: '6', name: '302', type: 'classroom', needsApproval: false },
+          { id: '7', name: '303A', type: 'classroom', needsApproval: false },
+          { id: '8', name: '303B', type: 'classroom', needsApproval: false },
+          { id: '9', name: '304', type: 'classroom', needsApproval: false },
+          { id: '10', name: '305', type: 'classroom', needsApproval: false },
+          { id: '11', name: '306', type: 'classroom', needsApproval: false },
+          { id: '12', name: 'Room 401', type: 'classroom', needsApproval: false },
+          { id: '13', name: 'Room 402', type: 'classroom', needsApproval: false },
+          { id: '14', name: 'Room 403', type: 'classroom', needsApproval: false },
+          { id: '15', name: '404', type: 'classroom', needsApproval: false },
+          { id: '16', name: '501', type: 'classroom', needsApproval: false },
+          { id: '17', name: '502', type: 'classroom', needsApproval: false },
+          { id: '18', name: '503', type: 'classroom', needsApproval: false },
+          { id: '19', name: '504', type: 'classroom', needsApproval: false },
+          
+          // Labs
+          { id: '20', name: 'Lab 2A', type: 'lab', needsApproval: false },
+          { id: '21', name: 'Lab 2B', type: 'lab', needsApproval: false },
+          { id: '22', name: 'Lab 2C', type: 'lab', needsApproval: false },
+          { id: '23', name: 'Lab 3A', type: 'lab', needsApproval: false },
+          { id: '24', name: 'Lab 3B', type: 'lab', needsApproval: false },
+          { id: '25', name: 'Lab 3C', type: 'lab', needsApproval: false },
+          { id: '26', name: 'Lab 4A', type: 'lab', needsApproval: false },
+          { id: '27', name: 'Lab 4B', type: 'lab', needsApproval: false },
+          { id: '28', name: 'Lab 4C', type: 'lab', needsApproval: false },
+          { id: '29', name: 'Lab 5A', type: 'lab', needsApproval: false },
+          { id: '30', name: 'Lab 5B', type: 'lab', needsApproval: false },
+          { id: '31', name: 'Lab 5F-MP', type: 'lab', needsApproval: false },
+          { id: '32', name: 'Lab 4F ADA', type: 'lab', needsApproval: false },
+          
+          // Auditoriums
+          { id: '33', name: 'Auditorium A', type: 'auditorium', needsApproval: true },
+          { id: '34', name: 'Auditorium B', type: 'auditorium', needsApproval: true }
         ];
         const DEMO_FIXED_SCHEDULE = [
           { id: '1', roomName: 'Room 401', dayOfWeek: 'Monday', startTime: '09:00', endTime: '10:00', subject: 'Mathematics' },
@@ -55,11 +109,14 @@
             selectedDate: new Date().toISOString().split('T')[0],
             roomFilter: '',
             timeFilter: 'all',
+            roomTypeFilter: 'all', // Added room type filter
             showMyBookings: false,
             facultyName: '',
             selectedSlot: null,
             confirmCancel: null,
-            submitting: false
+            submitting: false,
+            itServices: false, // Added for IT Services checkbox
+            foodServices: false // Added for Food Services checkbox
         };
 
         // --- HOD View State ---
@@ -98,7 +155,7 @@
 
             const fixedClass = DEMO_FIXED_SCHEDULE.find(
               fs => fs.roomName === room.name && fs.dayOfWeek === dayOfWeek &&
-                     fs.startTime === slot.start && fs.endTime === slot.end
+                    fs.startTime === slot.start && fs.endTime === slot.end
             );
             if (fixedClass) {
               return { status: 'fixed', label: `Fixed: ${fixedClass.subject}` };
@@ -148,6 +205,7 @@
 
         /**
          * Renders the header with user info.
+         * For HOD we add an "Approvals" button to access the HOD approval dashboard.
          */
         function renderHeader() {
             appHeader.innerHTML = `
@@ -166,6 +224,9 @@
                             <div class="bg-white bg-opacity-20 backdrop-blur-sm px-5 py-2.5 rounded-xl">
                                 <span class="font-bold capitalize text-sm tracking-wide">${userRole}</span>
                             </div>
+                            ${userRole === 'hod' ? `
+                              <button id="hod-approvals-btn" class="bg-yellow-500 hover:bg-yellow-600 px-4 py-2 rounded-xl text-sm font-semibold">Approvals</button>
+                            `: ''}
                             <button id="logout-button" class="bg-red-500 hover:bg-red-600 px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all duration-200 transform hover:scale-105 shadow-lg">
                                 <i data-lucide="log-out" size="18"></i>
                                 <span class="font-semibold">Logout</span>
@@ -176,10 +237,19 @@
             `;
             // Attach logout listener
             document.getElementById('logout-button').addEventListener('click', handleLogout);
+            if (userRole === 'hod') {
+                const btn = document.getElementById('hod-approvals-btn');
+                if (btn) btn.addEventListener('click', () => {
+                    // Show HOD approval dashboard
+                    renderHODView();
+                });
+            }
         }
 
         /**
          * Renders the correct view (Faculty, HOD, Admin) into the main content area.
+         * HOD primarily sees the faculty booking UI (so HOD can book),
+         * but can open the HOD approval view via the header button.
          */
         function renderMainContent() {
             switch (userRole) {
@@ -187,7 +257,8 @@
                     renderFacultyView();
                     break;
                 case 'hod':
-                    renderHODView();
+                    // Show faculty booking UI for HOD (so they can book), approvals accessible via header
+                    renderFacultyView();
                     break;
                 case 'admin':
                     renderAdminView();
@@ -199,6 +270,7 @@
 
         /**
          * Renders the Faculty dashboard or "My Bookings" page.
+         * HOD will use the same UI (so HOD can also book).
          */
         function renderFacultyView() {
             if (facultyState.showMyBookings) {
@@ -250,7 +322,7 @@
         function renderFacultyFilters() {
             return `
                 <div class="bg-white rounded-2xl shadow-xl p-6 mb-6">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
                     <div>
                         <label class="block text-gray-700 font-bold mb-2 text-sm flex items-center gap-2">
                         <i data-lucide="calendar" size="18" class="text-blue-600"></i>
@@ -295,6 +367,22 @@
                         `).join('')}
                         </select>
                     </div>
+                    
+                    <div>
+                        <label class="block text-gray-700 font-bold mb-2 text-sm flex items-center gap-2">
+                        <i data-lucide="building" size="18" class="text-blue-600"></i>
+                        Filter by Type
+                        </label>
+                        <select
+                        id="filter-room-type"
+                        class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        >
+                        <option value="all" ${facultyState.roomTypeFilter === 'all' ? 'selected' : ''}>All</option>
+                        <option value="classroom" ${facultyState.roomTypeFilter === 'classroom' ? 'selected' : ''}>Classrooms</option>
+                        <option value="lab" ${facultyState.roomTypeFilter === 'lab' ? 'selected' : ''}>Labs</option>
+                        <option value="auditorium" ${facultyState.roomTypeFilter === 'auditorium' ? 'selected' : ''}>Auditoriums</option>
+                        </select>
+                    </div>
                     </div>
                 </div>
             `;
@@ -303,7 +391,9 @@
         function renderRoomGrid() {
             const filteredRooms = DEMO_ROOMS.filter(room => {
                 const matchesName = room.name.toLowerCase().includes(facultyState.roomFilter.toLowerCase());
-                if (!matchesName) return false;
+                const matchesType = facultyState.roomTypeFilter === 'all' || room.type === facultyState.roomTypeFilter;
+                
+                if (!matchesName || !matchesType) return false;
 
                 if (facultyState.timeFilter === 'all') return true;
 
@@ -376,12 +466,12 @@
             mainContent.innerHTML = `
                 <div class="container mx-auto px-4 py-8">
                     <div class="flex justify-between items-center mb-6">
-                    <button
-                        id="back-to-booking-btn"
-                        class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-lg"
-                    >
-                        ← Back to Booking
-                    </button>
+                        <button
+                            id="back-to-booking-btn"
+                            class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-lg"
+                        >
+                            ← Back to Booking
+                        </button>
                     </div>
 
                     <div class="bg-white rounded-2xl shadow-xl p-6">
@@ -574,6 +664,7 @@
 
         /**
          * Renders the Admin dashboard with all bookings.
+         * I added an Admin-only Excel upload input and upload button here.
          */
         function renderAdminView() {
             const filteredBookings = adminState.filterDate
@@ -611,6 +702,15 @@
                         </button>
                         ` : ''}
                     </div>
+                    </div>
+
+                    <div class="mb-6 border-2 border-gray-100 p-4 rounded-xl">
+                        <h3 class="font-bold mb-2">Upload Classroom Timetable (Excel)</h3>
+                        <div class="flex gap-2">
+                            <input id="admin-excel-file" type="file" accept=".xlsx,.xls" class="p-2 rounded-xl border" />
+                            <button id="admin-upload-excel" class="bg-green-600 text-white px-4 py-2 rounded-xl">Upload & Sync</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Upload file format: columns for Room/Classroom, Day (e.g., Monday), StartTime (HH:MM), EndTime (HH:MM), Faculty (optional), Email (optional)</p>
                     </div>
 
                     <div class="overflow-x-auto">
@@ -666,7 +766,7 @@
                                     <i data-lucide="trash-2" size="14"></i>
                                     Delete
                                 </button>
-                                `}
+                                `} 
                             </td>
                             </tr>
                         `).join('')}
@@ -684,6 +784,9 @@
                 </div>
             `;
             attachAdminListeners();
+            // Attach admin excel upload handler after rendering
+            const uploadBtn = document.getElementById('admin-upload-excel');
+            if (uploadBtn) uploadBtn.addEventListener('click', handleAdminExcelUpload);
         }
 
         /**
@@ -740,10 +843,38 @@
                             />
                             </div>
 
+                            <div>
+                                <label class="block text-gray-700 font-bold mb-2">Additional Services</label>
+                                <div class="space-y-3">
+                                    <div class="flex items-center">
+                                        <input
+                                            type="checkbox"
+                                            id="it-services"
+                                            ${facultyState.itServices ? 'checked' : ''}
+                                            class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                        />
+                                        <label for="it-services" class="ml-3 text-gray-700 font-medium">
+                                            IT Services
+                                        </label>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <input
+                                            type="checkbox"
+                                            id="food-services"
+                                            ${facultyState.foodServices ? 'checked' : ''}
+                                            class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                        />
+                                        <label for="food-services" class="ml-3 text-gray-700 font-medium">
+                                            Food Services
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
                             ${room.needsApproval ? `
                             <div class="bg-yellow-50 border-2 border-yellow-300 p-4 rounded-xl text-sm text-yellow-800">
                                 <p class="font-semibold mb-1">⚠️ Approval Required</p>
-                                <p>This booking requires HOD approval. You will be notified of the status.</p>
+                                <p>This booking requires Admin approval. You will be notified of the status.</p>
                             </div>
                             ` : ''}
 
@@ -771,11 +902,20 @@
             document.getElementById('faculty-name-input').addEventListener('input', (e) => {
                 facultyState.facultyName = e.target.value;
             });
+            
+            // Attach checkbox listeners
+            document.getElementById('it-services').addEventListener('change', (e) => {
+                facultyState.itServices = e.target.checked;
+            });
+            document.getElementById('food-services').addEventListener('change', (e) => {
+                facultyState.foodServices = e.target.checked;
+            });
         }
         
         function closeModal() {
             facultyState.selectedSlot = null;
-            facultyState.facultyName = '';
+            // Do not clear faculty name, keep it for next booking
+            // facultyState.facultyName = '';
             facultyState.submitting = false;
             renderModal(); // This will hide it
         }
@@ -783,7 +923,7 @@
         // --- Event Handlers & Logic ---
 
         /**
-         * MODIFIED: Initializes Supabase.
+         * Initializes Supabase.
          */
         async function initializeAppServices() {
             try {
@@ -824,13 +964,40 @@
             const roomFilterInput = document.getElementById('filter-room');
             if (roomFilterInput) roomFilterInput.addEventListener('input', (e) => {
                 facultyState.roomFilter = e.target.value;
-                updateUI();
+                // Optimization: Re-render only the grid, not the whole UI
+                const grid = document.getElementById('room-grid');
+                if (grid) {
+                    grid.innerHTML = renderRoomGrid();
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                }
             });
             
             const timeFilterSelect = document.getElementById('filter-time');
             if (timeFilterSelect) timeFilterSelect.addEventListener('change', (e) => {
                 facultyState.timeFilter = e.target.value;
-                updateUI();
+                // Optimization: Re-render only the grid, not the whole UI
+                const grid = document.getElementById('room-grid');
+                if (grid) {
+                    grid.innerHTML = renderRoomGrid();
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                }
+            });
+            
+            const roomTypeFilterSelect = document.getElementById('filter-room-type');
+            if (roomTypeFilterSelect) roomTypeFilterSelect.addEventListener('change', (e) => {
+                facultyState.roomTypeFilter = e.target.value;
+                // Optimization: Re-render only the grid, not the whole UI
+                const grid = document.getElementById('room-grid');
+                if (grid) {
+                    grid.innerHTML = renderRoomGrid();
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                }
             });
 
             const myBookingsBtn = document.getElementById('my-bookings-btn');
@@ -953,7 +1120,8 @@
                     adminState.confirmCancel = null;
                     renderAdminView();
                 } else if (action === 'confirm-delete') {
-                    await handleCancelBooking(bookingId);
+                    // Admin confirmed deletion -> delete and notify faculty who booked it
+                    await handleAdminDeleteBooking(bookingId);
                     adminState.confirmCancel = null;
                 }
             });
@@ -976,6 +1144,10 @@
                 loginError.classList.add('hidden');
                 loginForm.reset();
                 
+                // Set faculty name if logging in as faculty/HOD
+                if(userRole === 'faculty') facultyState.facultyName = "Faculty User";
+                if(userRole === 'hod') facultyState.facultyName = "HOD User";
+
                 await fetchAllBookings();
                 
             } else {
@@ -995,8 +1167,9 @@
             
             facultyState = {
                 selectedDate: new Date().toISOString().split('T')[0],
-                roomFilter: '', timeFilter: 'all', showMyBookings: false,
-                facultyName: '', selectedSlot: null, confirmCancel: null, submitting: false
+                roomFilter: '', timeFilter: 'all', roomTypeFilter: 'all', showMyBookings: false,
+                facultyName: '', selectedSlot: null, confirmCancel: null, submitting: false,
+                itServices: false, foodServices: false
             };
             hodState = { confirmAction: null };
             adminState = { filterDate: '', confirmCancel: null };
@@ -1005,7 +1178,7 @@
         }
         
         /**
-         * MODIFIED: Fetches all bookings from Supabase.
+         * Fetches all bookings from Supabase.
          */
         async function fetchAllBookings() {
             if (!supabase) return;
@@ -1032,7 +1205,9 @@
         }
         
         /**
-         * MODIFIED: Handles the "Confirm Booking" button using Supabase.
+         * Handles the "Confirm Booking" button using Supabase.
+         * HOD bookings: same as faculty bookings.
+         * Auditorium bookings -> status = 'pending' (Admin approves).
          */
         async function handleBookingConfirm() {
             if (!facultyState.facultyName.trim()) {
@@ -1053,8 +1228,9 @@
                 startTime: slot.start,
                 endTime: slot.end,
                 status: room.needsApproval ? 'pending' : 'confirmed',
-                requestedBy: userEmail
-                // MODIFIED: Removed 'createdAt' line. The database will handle this automatically.
+                requestedBy: userEmail,
+                itServices: facultyState.itServices, // Added IT Services
+                foodServices: facultyState.foodServices // Added Food Services
             };
 
             try {
@@ -1084,7 +1260,7 @@
         }
         
         /**
-         * MODIFIED: (HOD) Approves a booking using Supabase.
+         * (HOD) Approves a booking using Supabase. (HOD can approve non-auditorium room requests if needed)
          */
         async function handleApprove(bookingId) {
             try {
@@ -1105,10 +1281,11 @@
         }
 
         /**
-         * MODIFIED: (HOD) Denies (deletes) a booking using Supabase.
+         * (HOD) Denies (deletes) a booking using Supabase.
          */
         async function handleDeny(bookingId) {
             try {
+                // Optionally fetch booking to get requester to notify (not implemented for HOD deny)
                 const { error } = await supabase
                     .from('bookings')
                     .delete()
@@ -1126,10 +1303,16 @@
         }
 
         /**
-         * MODIFIED: (Faculty/Admin) Cancels (deletes) a booking using Supabase.
+         * (Faculty) Cancels (deletes) a booking using Supabase.
+         * Also sends email to Admin notifying about the cancellation.
          */
         async function handleCancelBooking(bookingId) {
             try {
+                // fetch the booking to get details for email
+                const { data: bookRows, error: fetchErr } = await supabase.from('bookings').select('*').eq('id', bookingId).limit(1);
+                if (fetchErr) throw fetchErr;
+                const booking = bookRows && bookRows[0];
+
                 const { error } = await supabase
                     .from('bookings')
                     .delete()
@@ -1139,10 +1322,187 @@
                     throw error;
                 }
                 
+                // Notify admin by email if cancelled by faculty
+                sendEmailToAdminOnCancel(booking);
                 await fetchAllBookings();
             } catch (error) {
                 console.error("Error canceling booking:", error);
                 alert("Error canceling booking: " + error.message);
+            }
+        }
+
+        /**
+         * Admin deletes a booking — after admin deletes, notify the faculty who requested it.
+         */
+        async function handleAdminDeleteBooking(bookingId) {
+            try {
+                // fetch booking details first (to notify faculty email)
+                const { data: bookRows, error: fetchErr } = await supabase.from('bookings').select('*').eq('id', bookingId).limit(1);
+                if (fetchErr) throw fetchErr;
+                const booking = bookRows && bookRows[0];
+
+                const { error } = await supabase
+                    .from('bookings')
+                    .delete()
+                    .eq('id', bookingId);
+
+                if (error) {
+                    throw error;
+                }
+                
+                // Notify faculty who booked it
+                sendEmailToFacultyOnAdminCancel(booking);
+                await fetchAllBookings();
+            } catch (error) {
+                console.error("Error deleting booking:", error);
+                alert("Error deleting booking: " + error.message);
+            }
+        }
+
+        // -----------------------------
+        // Excel upload (Admin-only)
+        // -----------------------------
+        /**
+         * Reads the uploaded Excel file (first sheet), expects columns:
+         * Room / Classroom, Day (Monday...), StartTime (HH:MM), EndTime (HH:MM), Faculty (optional), Email (optional)
+         * and inserts bookings into the Supabase bookings table (status = confirmed).
+         */
+        async function handleAdminExcelUpload() {
+            const fileInput = document.getElementById('admin-excel-file');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                alert('Please select an Excel file first.');
+                return;
+            }
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+                    let inserted = 0;
+                    let newBookings = [];
+                    for (const row of rows) {
+                        // Normalize column names (be flexible)
+                        const roomName = String(row.Room || row.Classroom || row.RoomName || row['Room Name'] || 'Unknown Room').trim();
+                        const dayName = String(row.Day || row.DayOfWeek || row['Day'] || 'Monday').trim();
+                        const startTime = String(row.StartTime || row.Start || row['Start Time'] || '09:00').trim();
+                        const endTime = String(row.EndTime || row.End || row['End Time'] || '10:00').trim();
+                        const facultyName = String(row.Faculty || row.Instructor || row['Faculty Name'] || 'Timetable').trim();
+                        const facultyEmail = String(row.Email || row['Faculty Email'] || row.EmailAddress || 'unknown@college.edu').trim();
+
+                        const date = getDateForDayName(dayName);
+                        // Build booking entry
+                        const entry = {
+                            roomName,
+                            facultyName,
+                            date,
+                            startTime,
+                            endTime,
+                            status: 'confirmed',
+                            requestedBy: facultyEmail
+                        };
+                        newBookings.push(entry);
+                    }
+                    
+                    if (newBookings.length > 0) {
+                         const { data, error } = await supabase.from('bookings').insert(newBookings);
+                         if (error) throw error;
+                         inserted = data ? data.length : newBookings.length; // Fallback count
+                    }
+                    
+                    await fetchAllBookings();
+                    alert(`Imported ${inserted} rows from Excel and booked those slots.`);
+                } catch (err) {
+                    console.error('Excel import error', err);
+                    alert('Error reading Excel file. Check file format. See console for details.');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        /**
+         * Helper: Convert day name (Monday/Tuesday...) into the closest date in the current week.
+         */
+        function getDateForDayName(dayName) {
+            // Accept variations like 'Mon', 'monday', etc.
+            const normalized = String(dayName).trim();
+            const idx = DAYS_OF_WEEK.findIndex(d => d.toLowerCase().startsWith(normalized.toLowerCase().slice(0,3)));
+            const target = idx >= 0 ? idx : 1; // default Monday
+            
+            // If target is Sunday (0), treat it as 7 for calculation purposes
+            const targetDay = target === 0 ? 7 : target;
+
+            const today = new Date();
+            const todayDay = today.getDay() === 0 ? 7 : today.getDay(); // Sunday is 7
+
+            let diff = targetDay - todayDay;
+            // If the day has already passed this week, move to next week's day
+            if (diff < 0) {
+                diff += 7;
+            }
+
+            const date = new Date(today);
+            date.setDate(today.getDate() + diff);
+            return date.toISOString().split('T')[0];
+        }
+
+        // -----------------------------
+        // Email sending helpers (EmailJS)
+        // -----------------------------
+        function sendEmailToAdminOnCancel(booking) {
+            if (!booking) return;
+            // Template parameters: change keys to match your EmailJS template
+            const params = {
+                faculty_name: booking.facultyName || 'Unknown',
+                room_name: booking.roomName || '',
+                booking_date: booking.date || '',
+                booking_time: `${booking.startTime || ''} - ${booking.endTime || ''}`,
+                to_email: 'admin@college.edu' // or use a real admin email variable
+            };
+            if (typeof emailjs !== 'undefined' && emailjs.send && EMAILJS_SERVICE_ID !== 'YOUR_EMAILJS_SERVICE_ID') {
+                emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
+                    .then(() => console.log('EmailJS: cancellation notification sent to admin'))
+                    .catch(err => console.warn('EmailJS error sending admin cancel notification', err));
+            } else {
+                console.log("EmailJS not configured or init failed. Skipped sending admin cancel notification.");
+            }
+        }
+
+        function sendEmailToFacultyOnAdminCancel(booking) {
+            if (!booking) return;
+            // booking.requestedBy is expected to hold the faculty email
+            const facultyEmail = booking.requestedBy || booking.facultyEmail || 'unknown@college.edu';
+            const params = {
+                faculty_name: booking.facultyName || 'Faculty',
+                room_name: booking.roomName || '',
+                booking_date: booking.date || '',
+                booking_time: `${booking.startTime || ''} - ${booking.endTime || ''}`,
+                to_email: facultyEmail
+            };
+            if (typeof emailjs !== 'undefined' && emailjs.send && EMAILJS_SERVICE_ID !== 'YOUR_EMAILJS_SERVICE_ID') {
+                emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
+                    .then(() => console.log('EmailJS: admin delete notification sent to faculty'))
+                    .catch(err => console.warn('EmailJS error sending faculty notification', err));
+            } else {
+                console.log("EmailJS not configured or init failed. Skipped sending faculty notification.");
+            }
+        }
+
+        // -----------------------------
+        // Admin: Delete booking (without prompt)
+        // -----------------------------
+        async function deleteBookingDirect(bookingId) {
+            try {
+                const { error } = await supabase.from('bookings').delete().eq('id', bookingId);
+                if (error) throw error;
+                await fetchAllBookings();
+            } catch (err) {
+                console.error('deleteBookingDirect error', err);
+                alert('Delete failed: ' + err.message);
             }
         }
 
@@ -1167,6 +1527,12 @@
             // Initial render
             updateUI();
         });
+
+        // -----------------------------
+        // Admin Excel upload binding (global function used inside render)
+        // -----------------------------
+        // Make it globally accessible for the inline event listener
+        window.handleAdminExcelUpload = handleAdminExcelUpload;
 
     </script>
 
@@ -1236,7 +1602,7 @@
                     <span class="font-semibold">Faculty:</span> faculty@college.edu / faculty123
                     </div>
                     <div class="bg-white rounded-lg p-2">
-                    <span class_ ="font-semibold">HOD:</span> hod@college.edu / hod123
+                    <span class="font-semibold">HOD:</span> hod@college.edu / hod123
                     </div>
                     <div class="bg-white rounded-lg p-2">
                     <span class="font-semibold">Admin:</span> admin@college.edu / admin123
@@ -1297,14 +1663,14 @@
     </div>
 
     <div id="app-view" class="min-h-screen bg-gray-100 hidden">
-        <header id="app-header" class="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-7F00 text-white shadow-2xl">
-        </header>
+        <header id="app-header" class="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-800 text-white shadow-2xl">
+            </header>
         
         <main id="main-content">
             </main>
     </div>
 
-    <div id="modal-container" class="hidden">
+    <div id="modal-container" class="hidden"g>
         </div>
 
 </body>
